@@ -29,7 +29,9 @@
 #ifndef LIB_SYSTEM_H
 #define LIB_SYSTEM_H	1
 
+#ifdef HAVE_CONFIG_H
 #include <config.h>
+#endif
 
 #include <errno.h>
 #include <stddef.h>
