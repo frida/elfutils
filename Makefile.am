@@ -26,8 +26,11 @@ AM_MAKEFLAGS = --no-print-directory
 
 pkginclude_HEADERS = version.h
 
-SUBDIRS = config lib libelf libcpu backends libebl libdwelf libdwfl libdw \
-	  libasm debuginfod src po doc tests
+SUBDIRS = config lib libelf
+if LIBDW
+SUBDIRS += libcpu backends libebl libdwelf libdwfl libdw \
+	   libasm debuginfod src po doc tests
+endif
 
 EXTRA_DIST = elfutils.spec GPG-KEY NOTES CONTRIBUTING \
 	     COPYING COPYING-GPLV2 COPYING-LGPLV3

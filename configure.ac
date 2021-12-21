@@ -750,6 +750,9 @@ AS_IF([test "x$enable_libdebuginfod" != "xno"], [
 AC_CHECK_LIB(pthread, pthread_setname_np, [
                       AC_DEFINE([HAVE_PTHREAD_SETNAME_NP],[1],[Enable pthread_setname_np])])
 
+AC_ARG_ENABLE([libdw], AC_HELP_STRING([--disable-libdw], [Disable libdw]))
+AM_CONDITIONAL(LIBDW, test "x$enable_libdw" != "xno")
+
 AS_IF([test "x$enable_libdebuginfod" = "xyes" || test "x$enable_libdebuginfod" = "xdummy"],
       [AC_DEFINE([ENABLE_LIBDEBUGINFOD], [1], [Enable libdebuginfod])])
 AS_IF([test "x$enable_libdebuginfod" = "xdummy"],
