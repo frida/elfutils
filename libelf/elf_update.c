@@ -95,12 +95,17 @@ write_file (Elf *elf, int64_t size, int change_bo, size_t shnum)
 	  && (elf->maximum_size == ~((size_t) 0)
 	      || (size_t) size > elf->maximum_size))
 	{
+#if defined(__ANDROID__) && __ANDROID_API__ < 21
+	  /* Frida doesn't need this functionality so we won't bother
+	     porting it. */
+#else
 	  if (unlikely (posix_fallocate (elf->fildes, 0, size) != 0))
 	    if (errno == ENOSPC)
 	      {
 		__libelf_seterrno (ELF_E_WRITE_ERROR);
 		return -1;
 	      }
+#endif
 
 	  /* Extend the mmap address if needed.  */
 	  if (elf->cmd == ELF_C_RDWR_MMAP

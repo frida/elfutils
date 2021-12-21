@@ -35,7 +35,11 @@ noinst_LIBRARIES = libeu.a
 
 libeu_a_SOURCES = xasprintf.c xstrdup.c xstrndup.c xmalloc.c next_prime.c \
 		  crc32.c crc32_file.c \
-		  color.c error.c printversion.c
+		  error.c
+
+if HAVE_ARGP_PARSE
+libeu_a_SOURCES += color.c printversion.c
+endif
 
 noinst_HEADERS = fixedsizehash.h libeu.h system.h dynamicsizehash.h list.h \
 		 eu-config.h color.h printversion.h bpf.h \

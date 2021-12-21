@@ -28,7 +28,44 @@
 
 #include <config.h>
 
-#if !defined(HAVE_ERROR_H) && defined(HAVE_ERR_H)
+#if defined(__ANDROID__) && __ANDROID_API__ < 23
+#include <errno.h>
+#include <stdarg.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+unsigned int error_message_count = 0;
+
+void error(int status, int errnum, const char *format, ...) {
+  va_list argp;
+  int saved_errno = errno;
+
+  fflush (stdout);
+
+  va_start(argp, format);
+
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wformat-nonliteral"
+  vfprintf (stderr, format, argp);
+#pragma GCC diagnostic pop
+  if (errnum)
+    fprintf (stderr, ": %s", strerror (errno));
+  fputc ('\n', stderr);
+
+  if (status)
+    exit (status);
+
+  va_end(argp);
+
+  fflush (stderr);
+
+  ++error_message_count;
+
+  errno = saved_errno;
+}
+
+#elif !defined(HAVE_ERROR_H) && defined(HAVE_ERR_H)
 #include <errno.h>
 #include <stdarg.h>
 #include <stdio.h>

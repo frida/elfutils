@@ -44,7 +44,10 @@
 #include <stdarg.h>
 #include <stdlib.h>
 
-#if defined(HAVE_ERROR_H)
+#if defined(__ANDROID__) && __ANDROID_API__ < 23
+extern int error_message_count;
+void error(int status, int errnum, const char *format, ...);
+#elif defined(HAVE_ERROR_H)
 #include <error.h>
 #elif defined(HAVE_ERR_H)
 extern int error_message_count;

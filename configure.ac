@@ -559,17 +559,18 @@ saved_LIBS="$LIBS"
 AC_SEARCH_LIBS([argp_parse], [argp])
 LIBS="$saved_LIBS"
 case "$ac_cv_search_argp_parse" in
-        no) AC_MSG_FAILURE([failed to find argp_parse]) ;;
+        no) AC_MSG_WARN([failed to find argp_parse]) ;;
         -l*) argp_LDADD="$ac_cv_search_argp_parse" ;;
         *) argp_LDADD= ;;
 esac
 AC_SUBST([argp_LDADD])
+AM_CONDITIONAL([HAVE_ARGP_PARSE], [test "x$ac_cv_search_argp_parse" != "xno"])
 
 saved_LIBS="$LIBS"
 AC_SEARCH_LIBS([fts_close], [fts])
 LIBS="$saved_LIBS"
 case "$ac_cv_search_fts_close" in
-        no) AC_MSG_FAILURE([failed to find fts_close]) ;;
+        no) AC_MSG_WARN([failed to find fts_close]) ;;
         -l*) fts_LIBS="$ac_cv_search_fts_close" ;;
         *) fts_LIBS= ;;
 esac
@@ -579,7 +580,7 @@ saved_LIBS="$LIBS"
 AC_SEARCH_LIBS([_obstack_free], [obstack])
 LIBS="$saved_LIBS"
 case "$ac_cv_search__obstack_free" in
-        no) AC_MSG_FAILURE([failed to find _obstack_free]) ;;
+        no) AC_MSG_WARN([failed to find _obstack_free]) ;;
         -l*) obstack_LIBS="$ac_cv_search__obstack_free" ;;
         *) obstack_LIBS= ;;
 esac
