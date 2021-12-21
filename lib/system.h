@@ -40,6 +40,9 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#ifndef O_CLOEXEC
+# define O_CLOEXEC 0
+#endif
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
