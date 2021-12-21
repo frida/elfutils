@@ -34,7 +34,10 @@ EXTRA_DIST = elfutils.spec.in known-dwarf.awk 10-default-yama-scope.conf \
 	     profile.sh.in profile.csh.in profile.fish.in
 
 pkgconfigdir = $(libdir)/pkgconfig
-pkgconfig_DATA = libelf.pc libdw.pc
+pkgconfig_DATA = libelf.pc
+if LIBDW
+pkgconfig_DATA += libdw.pc
+endif
 if LIBDEBUGINFOD
 pkgconfig_DATA += libdebuginfod.pc
 

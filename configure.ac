@@ -1048,6 +1048,9 @@ fi
 AS_IF([test "x$enable_libdebuginfod" != "xno"],[AC_DEFINE([ENABLE_LIBDEBUGINFOD], [1], [Enable libdebuginfod])])
 AM_CONDITIONAL([LIBDEBUGINFOD],[test "x$enable_libdebuginfod" != "xno"])
 AS_IF([test "x$enable_libdebuginfod" = "xdummy"],[AC_DEFINE([DUMMY_LIBDEBUGINFOD], [1], [Build dummy libdebuginfod])])
+
+AC_ARG_ENABLE([libdw], AC_HELP_STRING([--disable-libdw], [Disable libdw]))
+AM_CONDITIONAL(LIBDW, test "x$enable_libdw" != "xno")
 AM_CONDITIONAL([DUMMY_LIBDEBUGINFOD],[test "x$enable_libdebuginfod" = "xdummy"])
 AS_IF([test "x$enable_debuginfod" != "xno"],AC_DEFINE([ENABLE_DEBUGINFOD],[1],[Build debuginfod]))
 AM_CONDITIONAL([DEBUGINFOD],[test "x$enable_debuginfod" = "xyes"])
