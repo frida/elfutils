@@ -34,6 +34,41 @@
 #include "libelfP.h"
 #include "common.h"
 
+#ifndef htobe64
+# if __BYTE_ORDER == __LITTLE_ENDIAN
+#  ifdef HAVE_BSWAP64
+#   define htobe64(x) __builtin_bswap64 (x)
+#   define be64toh(x) __builtin_bswap64 (x)
+#  else
+#   define htobe64(x) elf_bswap64 (x)
+#   define be64toh(x) elf_bswap64 (x)
+
+typedef union
+{
+  uint8_t bytes[8];
+  uint64_t u64;
+} Bitcast_U64;
+
+static uint64_t
+elf_bswap64 (uint64_t x)
+{
+  Bitcast_U64 input, output;
+
+  input.u64 = x;
+
+  for (int i = 0; i < 8; i++)
+    output.bytes[i] = input.bytes[7 - i];
+
+  return output.u64;
+}
+
+#  endif
+# else
+#  define htobe64(x) x
+#  define be64toh(x) x
+# endif
+#endif
+
 int
 elf_compress_gnu (Elf_Scn *scn, int inflate, unsigned int flags)
 {
