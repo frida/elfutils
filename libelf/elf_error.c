@@ -41,7 +41,11 @@
 
 
 /* The error number.  */
-static __thread int global_error;
+static
+#ifdef HAVE_THREAD_STORAGE_CLASS
+__thread
+#endif
+int global_error;
 
 
 int
