@@ -36,7 +36,9 @@ VERSION = 1
 
 lib_LIBRARIES = libelf.a
 noinst_LIBRARIES = libelf_pic.a
+if ELFSO
 noinst_DATA = $(noinst_LIBRARIES:_pic.a=.so)
+endif
 include_HEADERS = libelf.h gelf.h nlist.h
 
 noinst_HEADERS = abstract.h common.h exttypes.h gelf_xlate.h libelfP.h \
@@ -102,6 +104,7 @@ libelf_a_SOURCES = elf_version.c elf_hash.c elf_error.c elf_fill.c \
 		   elf32_getchdr.c elf64_getchdr.c gelf_getchdr.c \
 		   elf_compress.c elf_compress_gnu.c
 
+if ELFSO
 libelf_pic_a_SOURCES =
 am_libelf_pic_a_OBJECTS = $(libelf_a_SOURCES:.c=.os)
 
@@ -132,6 +135,9 @@ uninstall: uninstall-am
 	rm -f $(DESTDIR)$(libdir)/libelf.so.$(VERSION)
 	rm -f $(DESTDIR)$(libdir)/libelf.so
 
+CLEANFILES += libelf.so libelf.so.$(VERSION)
+endif
+
 EXTRA_DIST = libelf.map
 
-CLEANFILES += $(am_libelf_pic_a_OBJECTS) libelf.so libelf.so.$(VERSION)
+CLEANFILES += $(am_libelf_pic_a_OBJECTS)

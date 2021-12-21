@@ -376,6 +376,9 @@ AS_HELP_STRING([--enable-install-elfh],[install elf.h in include dir]),
                [install_elfh=$enableval], [install_elfh=no])
 AM_CONDITIONAL(INSTALL_ELFH, test "$install_elfh" = yes)
 
+AC_ARG_ENABLE([elfso], AC_HELP_STRING([--disable-elfso], [Disable libelf.so]))
+AM_CONDITIONAL(ELFSO, test "x$enable_elfso" != "xno")
+
 AM_CONDITIONAL(BUILD_STATIC, [dnl
 test "$use_gprof" = yes -o "$use_gcov" = yes])
 
