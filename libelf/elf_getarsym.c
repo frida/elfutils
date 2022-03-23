@@ -40,6 +40,7 @@
 
 #include <dl-hash.h>
 #include "libelfP.h"
+#include "common.h"
 
 
 static int

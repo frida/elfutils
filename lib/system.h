@@ -51,8 +51,12 @@
 #include <stdlib.h>
 
 /* System dependent headers */
+#ifdef HAVE_BYTESWAP_H
 #include <byteswap.h>
+#endif
+#ifdef HAVE_ENDIAN_H
 #include <endian.h>
+#endif
 #include <sys/mman.h>
 #include <sys/param.h>
 #include <unistd.h>
@@ -81,6 +85,20 @@ void error(int status, int errnum, const char *format, ...);
     error (EXIT_FAILURE,errnum,__VA_ARGS__); \
     exit (EXIT_FAILURE); \
   } while (0)
+
+/* The following fallbacks are applicable on QNX, at least SDKs <= 6.5.0. */
+#if !(defined(HAVE_ENDIAN_H) && defined(HAVE_BYTESWAP_H))
+# ifndef __BYTE_ORDER
+#  define __BYTE_ORDER    BYTE_ORDER
+#  define __LITTLE_ENDIAN LITTLE_ENDIAN
+#  define __BIG_ENDIAN    BIG_ENDIAN
+# endif
+# ifndef bswap_16
+#   define bswap_16(n) __builtin_bswap16 (n)
+#   define bswap_32(n) __builtin_bswap32 (n)
+#   define bswap_64(n) __builtin_bswap64 (n)
+# endif
+#endif
 
 #if BYTE_ORDER == LITTLE_ENDIAN
 # define LE32(n)	(n)

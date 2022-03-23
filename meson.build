@@ -77,6 +77,8 @@ cdata.set10('CHECK_UNDEFINED', 0)
 cdata.set('USE_ZLIB', 1)
 
 system_headers = [
+  'byteswap.h',
+  'endian.h',
   'error.h',
   'err.h',
   'inttypes.h',

@@ -33,10 +33,9 @@
 #endif
 
 #include <stdint.h>
-#include <string.h>
-#include <stdlib.h>
 
 #include "libelfP.h"
+#include "common.h"
 
 #ifndef LIBELFBITS
 # define LIBELFBITS	32

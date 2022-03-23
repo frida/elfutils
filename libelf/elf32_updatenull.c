@@ -34,9 +34,9 @@
 #include <assert.h>
 #include <libelf.h>
 #include <stdbool.h>
-#include <string.h>
 
 #include "libelfP.h"
+#include "common.h"
 #include "elf-knowledge.h"
 
 #ifndef LIBELFBITS
