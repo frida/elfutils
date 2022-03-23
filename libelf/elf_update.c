@@ -107,6 +107,7 @@ write_file (Elf *elf, int64_t size, int change_bo, size_t shnum)
 	      }
 #endif
 
+#ifdef HAVE_MREMAP
 	  /* Extend the mmap address if needed.  */
 	  if (elf->cmd == ELF_C_RDWR_MMAP
 	      && (size_t) size > elf->maximum_size)
@@ -119,7 +120,10 @@ write_file (Elf *elf, int64_t size, int change_bo, size_t shnum)
 		}
 	      elf->maximum_size = size;
 	    }
-
+#else
+	  /* Frida doesn't need this functionality so we won't bother
+	     porting it. */
+#endif
 	}
 
       /* The file is mmaped.  */

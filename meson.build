@@ -77,6 +77,8 @@ cdata.set10('CHECK_UNDEFINED', 0)
 cdata.set('USE_ZLIB', 1)
 
 system_headers = [
+  'byteswap.h',
+  'endian.h',
   'error.h',
   'err.h',
   'inttypes.h',
@@ -104,9 +106,15 @@ cdata.set10('HAVE_DECL_POWEROF2', cc.has_header_symbol('sys/param.h', 'powerof2'
 cdata.set10('HAVE_DECL_MEMPCPY', cc.has_header_symbol('string.h', 'mempcpy', args: gnu_source_args))
 cdata.set10('HAVE_DECL_REALLOCARRAY', cc.has_header_symbol('stdlib.h', 'reallocarray', args: gnu_source_args))
 
-if cc.has_function('process_vm_readv')
-  cdata.set('HAVE_PROCESS_VM_READV', 1)
-endif
+system_functions = [
+  'mremap',
+  'process_vm_readv',
+]
+foreach f : system_functions
+  if cc.has_function(f)
+    cdata.set('HAVE_' + h.to_upper(), 1)
+  endif
+endforeach
 
 have_strerror_r = cc.has_header_symbol('string.h', 'strerror_r', args: gnu_source_args)
 cdata.set10('HAVE_DECL_STRERROR_R', have_strerror_r)

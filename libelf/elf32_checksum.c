@@ -32,13 +32,12 @@
 #endif
 
 #include <assert.h>
-#include <endian.h>
 #include <stdbool.h>
 #include <stddef.h>
-#include <string.h>
 
 #include "gelf.h"
 #include "libelfP.h"
+#include "common.h"
 #include "elf-knowledge.h"
 
 #ifndef LIBELFBITS

@@ -37,8 +37,12 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <sys/param.h>
+#ifdef HAVE_ENDIAN_H
 #include <endian.h>
+#endif
+#ifdef HAVE_BYTESWAP_H
 #include <byteswap.h>
+#endif
 #include <unistd.h>
 #include <string.h>
 #include <stdarg.h>
@@ -54,6 +58,20 @@ extern int error_message_count;
 void error(int status, int errnum, const char *format, ...);
 #else
 #error "err.h or error.h must be available"
+#endif
+
+/* The following fallbacks are applicable on QNX, at least SDKs <= 6.5.0. */
+#if !(defined(HAVE_ENDIAN_H) && defined(HAVE_BYTESWAP_H))
+# ifndef __BYTE_ORDER
+#  define __BYTE_ORDER    BYTE_ORDER
+#  define __LITTLE_ENDIAN LITTLE_ENDIAN
+#  define __BIG_ENDIAN    BIG_ENDIAN
+# endif
+# ifndef bswap_16
+#   define bswap_16(n) __builtin_bswap16 (n)
+#   define bswap_32(n) __builtin_bswap32 (n)
+#   define bswap_64(n) __builtin_bswap64 (n)
+# endif
 #endif
 
 #if __BYTE_ORDER == __LITTLE_ENDIAN

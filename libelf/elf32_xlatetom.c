@@ -32,10 +32,9 @@
 #endif
 
 #include <assert.h>
-#include <endian.h>
-#include <string.h>
 
 #include "libelfP.h"
+#include "common.h"
 
 #ifndef LIBELFBITS
 # define LIBELFBITS	32

@@ -30,11 +30,14 @@
 #ifndef _COMMON_H
 #define _COMMON_H       1
 
+#ifdef HAVE_CONFIG_H
+#include <config.h>
+#endif
+
 #include <ar.h>
-#include <byteswap.h>
-#include <endian.h>
 #include <stdlib.h>
 #include <string.h>
+#include <system.h>
 
 #include "libelfP.h"
 

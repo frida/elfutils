@@ -31,12 +31,10 @@
 # include <config.h>
 #endif
 
-#include <byteswap.h>
 #include <stdint.h>
-#include <string.h>
-#include <stdlib.h>
 
 #include "libelfP.h"
+#include "common.h"
 
 #ifndef LIBELFBITS
 # define LIBELFBITS	32
