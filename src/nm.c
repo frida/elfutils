@@ -30,7 +30,6 @@
 #include <gelf.h>
 #include <inttypes.h>
 #include <libdw.h>
-#include <libintl.h>
 #include <locale.h>
 #include <obstack.h>
 #include <search.h>
@@ -137,8 +136,8 @@ static int handle_elf (int fd, Elf *elf, const char *prefix, const char *fname,
 
 
 #define INTERNAL_ERROR(fname) \
-  error (EXIT_FAILURE, 0, _("%s: INTERNAL ERROR %d (%s): %s"),      \
-	 fname, __LINE__, PACKAGE_VERSION, elf_errmsg (-1))
+  error_exit (0, _("%s: INTERNAL ERROR %d (%s): %s"),      \
+	      fname, __LINE__, PACKAGE_VERSION, elf_errmsg (-1))
 
 
 /* Internal representation of symbols.  */
@@ -378,7 +377,7 @@ process_file (const char *fname, bool more_than_one)
 	    INTERNAL_ERROR (fname);
 
 	  if (close (fd) != 0)
-	    error (EXIT_FAILURE, errno, _("while closing '%s'"), fname);
+	    error_exit (errno, _("while closing '%s'"), fname);
 
 	  return result;
 	}
@@ -390,7 +389,7 @@ process_file (const char *fname, bool more_than_one)
 	    INTERNAL_ERROR (fname);
 
 	  if (close (fd) != 0)
-	    error (EXIT_FAILURE, errno, _("while closing '%s'"), fname);
+	    error_exit (errno, _("while closing '%s'"), fname);
 
 	  return result;
 	}
@@ -440,7 +439,7 @@ handle_ar (int fd, Elf *elf, const char *prefix, const char *fname,
 	  Elf_Arhdr *arhdr = NULL;
 	  size_t arhdr_off = 0;	/* Note: 0 is no valid offset.  */
 
-	  fputs_unlocked (_("\nArchive index:\n"), stdout);
+	  fputs (_("\nArchive index:\n"), stdout);
 
 	  while (arsym->as_off != 0)
 	    {
@@ -700,8 +699,7 @@ get_local_names (Dwarf *dbg)
 	    struct local_name **tres = tsearch (newp, &local_root,
 						local_compare);
 	    if (tres == NULL)
-              error (EXIT_FAILURE, errno,
-                     _("cannot create search tree"));
+              error_exit (errno, _("cannot create search tree"));
 	    else if (*tres != newp)
 	      free (newp);
 	  }
@@ -741,8 +739,7 @@ show_symbols_sysv (Ebl *ebl, GElf_Word strndx, const char *fullname,
   /* Get the section header string table index.  */
   size_t shstrndx;
   if (elf_getshdrstrndx (ebl->elf, &shstrndx) < 0)
-    error (EXIT_FAILURE, 0,
-	   _("cannot get section header string table index"));
+    error_exit (0, _("cannot get section header string table index"));
 
   /* Cache the section names.  */
   Elf_Scn *scn = NULL;
@@ -828,11 +825,11 @@ show_symbols_sysv (Ebl *ebl, GElf_Word strndx, const char *fullname,
       /* If we have to precede the line with the file name.  */
       if (print_file_name)
 	{
-	  fputs_unlocked (fullname, stdout);
-	  putchar_unlocked (':');
+	  fputs (fullname, stdout);
+	  putchar (':');
 	}
 
-      /* Covert the address.  */
+      /* Convert the address.  */
       if (syms[cnt].sym.st_shndx == SHN_UNDEF)
 	{
 	  sprintf (addressbuf, "%*c", digits, ' ');
@@ -975,8 +972,8 @@ show_symbols_bsd (Elf *elf, const GElf_Ehdr *ehdr, GElf_Word strndx,
       /* If we have to precede the line with the file name.  */
       if (print_file_name)
 	{
-	  fputs_unlocked (fullname, stdout);
-	  putchar_unlocked (':');
+	  fputs (fullname, stdout);
+	  putchar (':');
 	}
 
       bool is_tls = GELF_ST_TYPE (syms[cnt].sym.st_info) == STT_TLS;
@@ -1049,8 +1046,8 @@ show_symbols_bsd (Elf *elf, const GElf_Ehdr *ehdr, GElf_Word strndx,
 	}
 
       if (color_mode)
-	fputs_unlocked (color_off, stdout);
-      putchar_unlocked ('\n');
+	fputs (color_off, stdout);
+      putchar ('\n');
     }
 
 #ifdef USE_DEMANGLE
@@ -1107,9 +1104,9 @@ show_symbols_posix (Elf *elf, const GElf_Ehdr *ehdr, GElf_Word strndx,
       /* If we have to precede the line with the file name.  */
       if (print_file_name)
 	{
-	  fputs_unlocked (fullname, stdout);
-	  putchar_unlocked (':');
-	  putchar_unlocked (' ');
+	  fputs (fullname, stdout);
+	  putchar (':');
+	  putchar (' ');
 	}
 
       printf ("%s %c%s", symstr,
@@ -1234,8 +1231,7 @@ show_symbols (int fd, Ebl *ebl, GElf_Ehdr *ehdr,
   /* Get the section header string table index.  */
   size_t shstrndx;
   if (elf_getshdrstrndx (ebl->elf, &shstrndx) < 0)
-    error (EXIT_FAILURE, 0,
-	   _("cannot get section header string table index"));
+    error_exit (0, _("cannot get section header string table index"));
 
   /* The section is that large.  */
   size_t size = shdr->sh_size;
@@ -1331,10 +1327,9 @@ show_symbols (int fd, Ebl *ebl, GElf_Ehdr *ehdr,
      can use the data memory instead of copying again if what we read
      is a 64 bit file.  */
   if (nentries > SIZE_MAX / sizeof (GElf_SymX))
-    error (EXIT_FAILURE, 0,
-          _("%s: entries (%zd) in section %zd `%s' is too large"),
-          fullname, nentries, elf_ndxscn (scn),
-          elf_strptr (ebl->elf, shstrndx, shdr->sh_name));
+    error_exit (0, _("%s: entries (%zd) in section %zd `%s' is too large"),
+		fullname, nentries, elf_ndxscn (scn),
+		elf_strptr (ebl->elf, shstrndx, shdr->sh_name));
   GElf_SymX *sym_mem;
   if (nentries * sizeof (GElf_SymX) < MAX_STACK_ALLOC)
     sym_mem = (GElf_SymX *) alloca (nentries * sizeof (GElf_SymX));
@@ -1422,7 +1417,7 @@ show_symbols (int fd, Ebl *ebl, GElf_Ehdr *ehdr,
 			  int lineno;
 			  (void) dwarf_lineno (line, &lineno);
 			  const char *file = dwarf_linesrc (line, NULL, NULL);
-			  file = (file != NULL) ? basename (file) : "???";
+			  file = (file != NULL) ? xbasename (file) : "???";
 			  int n;
 			  n = obstack_printf (&whereob, "%s:%d%c", file,
 					      lineno, '\0');
@@ -1453,7 +1448,7 @@ show_symbols (int fd, Ebl *ebl, GElf_Ehdr *ehdr,
 		{
 		  /* We found the line.  */
 		  int n = obstack_printf (&whereob, "%s:%" PRIu64 "%c",
-					  basename ((*found)->file),
+					  xbasename ((*found)->file),
 					  (*found)->lineno,
 					  '\0');
 		  sym_mem[nentries_used].where = obstack_finish (&whereob);

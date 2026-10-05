@@ -34,9 +34,9 @@
 #include <assert.h>
 #include <libelf.h>
 #include <stdbool.h>
+#include <string.h>
 
 #include "libelfP.h"
-#include "common.h"
 #include "elf-knowledge.h"
 
 #ifndef LIBELFBITS
@@ -135,7 +135,8 @@ __elfw2(LIBELFBITS,updatenull_wrlock) (Elf *elf, int *change_bop, size_t shnum)
   ehdr = __elfw2(LIBELFBITS,getehdr_wrlock) (elf);
 
   /* Set the default values.  */
-  if (ELFW(default_ehdr,LIBELFBITS) (elf, ehdr, shnum, change_bop) != 0)
+  if (ehdr == NULL
+      || ELFW(default_ehdr,LIBELFBITS) (elf, ehdr, shnum, change_bop) != 0)
     return -1;
 
   /* At least the ELF header is there.  */
@@ -182,6 +183,10 @@ __elfw2(LIBELFBITS,updatenull_wrlock) (Elf *elf, int *change_bop, size_t shnum)
 	  /* We have to  fill in the number of sections in the header
 	     of the zeroth section.  */
 	  Elf_Scn *scn0 = &elf->state.ELFW(elf,LIBELFBITS).scns.data[0];
+
+	  /* Make sure section zero header is actually loaded.  */
+	  if (scn0->shdr.ELFW(e,LIBELFBITS) == NULL)
+	    (void) __elfw2(LIBELFBITS,getshdr_wrlock) (scn0);
 
 	  update_if_changed (scn0->shdr.ELFW(e,LIBELFBITS)->sh_size,
 			     shnum, scn0->shdr_flags);
@@ -255,6 +260,9 @@ __elfw2(LIBELFBITS,updatenull_wrlock) (Elf *elf, int *change_bop, size_t shnum)
 		  break;
 		case SHT_SUNW_syminfo:
 		  sh_entsize = elf_typesize (LIBELFBITS, ELF_T_SYMINFO, 1);
+		  break;
+		case SHT_RELR:
+		  sh_entsize = elf_typesize (LIBELFBITS, ELF_T_RELR, 1);
 		  break;
 		default:
 		  break;
@@ -404,7 +412,7 @@ __elfw2(LIBELFBITS,updatenull_wrlock) (Elf *elf, int *change_bop, size_t shnum)
 		  else
 		    {
 		      ElfW2(LIBELFBITS,Chdr) *chdr;
-		      chdr = elfw2(LIBELFBITS,getchdr) (scn);
+		      chdr = __elfw2(LIBELFBITS,getchdr_wrlock) (scn);
 		      if (unlikely (chdr == NULL))
 			return -1;
 		      sh_size = chdr->ch_size;

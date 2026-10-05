@@ -32,8 +32,6 @@
 
 #include "libdwflP.h"
 #include <fcntl.h>
-#include <unistd.h>
-
 
 /* We start every ET_REL module at a moderately aligned boundary.
    This keeps the low addresses easy to read compared to a layout
@@ -270,6 +268,9 @@ __libdwfl_report_elf (Dwfl *dwfl, const char *name, const char *file_name,
       /* Preinstall the open ELF handle for the module.  */
       if (m->main.elf == NULL)
 	{
+	  /* We assume all calls to __libdwfl_report_elf got their Elf
+	     through __libdw_open_file which already called
+	     __libdwfl_reset_sh_addr.  */
 	  m->main.elf = elf;
 	  m->main.vaddr = vaddr;
 	  m->main.address_sync = address_sync;
@@ -278,10 +279,11 @@ __libdwfl_report_elf (Dwfl *dwfl, const char *name, const char *file_name,
 	}
       else
 	{
-	  elf_end (elf);
 	  if (m->main_bias != bias
 	      || m->main.vaddr != vaddr || m->main.address_sync != address_sync)
 	    goto overlap;
+	  elf_end (m->main.elf);
+	  m->main.elf = elf;
 	}
     }
   return m;

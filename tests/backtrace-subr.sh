@@ -59,7 +59,7 @@ check_backtracegen()
 # Ignore it here as it is a bug of OS, not a bug of elfutils.
 check_err()
 {
-  if [ $(egrep -v <$1 'dwfl_thread_getframes: (No DWARF information found|no matching address range|address out of range|Invalid register|\(null\))$' \
+  if [ $(grep -E -v <$1 'dwfl_thread_getframes: (No DWARF information found|no matching address range|address out of range|Invalid register|\(null\))$' \
          | wc -c) \
        -eq 0 ]
   then
@@ -101,7 +101,7 @@ check_native_unsupported()
   # and we can fall back on .debug_frame for the CFI.
   case "`uname -m`" in
     arm* )
-      if egrep 'dwfl_thread_getframes(.*)No DWARF information found' $err; then
+      if grep -E 'dwfl_thread_getframes(.*)No DWARF information found' $err; then
 	echo >&2 $testname: arm needs debuginfo installed for all libraries
 	exit 77
       fi
@@ -187,7 +187,9 @@ check_native_core()
   fi
 
   if [ "x$SAVED_VALGRIND_CMD" != "x" ]; then
-    VALGRIND_CMD="$SAVED_VALGRIND_CMD"
+    # Restore $VALGRIND_CMD but disable --track-fds for the following testrun.
+    # Valgrind --track-fds might complain about an inherited fd.
+    VALGRIND_CMD=$(sed 's/--track-fds=yes//g' <<< "$SAVED_VALGRIND_CMD")
     export VALGRIND_CMD
   fi
 
@@ -195,6 +197,12 @@ check_native_core()
   # - see function check_err.
   tempfiles $core{,.{bt,err}}
   (set +ex; testrun ${abs_builddir}/backtrace -e ${abs_builddir}/$child --core=$core 1>$core.bt 2>$core.err; true)
+
+  if [ "x$SAVED_VALGRIND_CMD" != "x" ]; then
+    VALGRIND_CMD="$SAVED_VALGRIND_CMD"
+    export VALGRIND_CMD
+  fi
+
   cat $core.{bt,err}
   check_native_unsupported $core.err $child-$core
   check_all $core.{bt,err} $child-$core

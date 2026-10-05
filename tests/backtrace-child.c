@@ -100,6 +100,7 @@ main (int argc __attribute__ ((unused)), char **argv)
 #else /* __linux__ */
 #include <sys/ptrace.h>
 #include <signal.h>
+#include <semaphore.h>
 
 #if __GNUC__ > 4 || (__GNUC__ == 4 && __GNUC_MINOR__ >= 5)
 #define NOINLINE_NOCLONE __attribute__ ((noinline, noclone))
@@ -112,6 +113,13 @@ main (int argc __attribute__ ((unused)), char **argv)
 #define USED __attribute__ ((used))
 
 static int ptraceme, gencore;
+
+/* Synchronize between project-mayhem thread and main, blocking the
+   former until the latter has finished and returned from
+   pthread_create.  Especially on slow hosts (armhf) and in --gencore
+   mode, without this synchronization, incomplete stacktraces were
+   sometimes generated from deep within pthread_create innards. */
+static sem_t gencore_go;
 
 /* Execution will arrive here from jmp by an artificial ptrace-spawn signal.  */
 
@@ -202,6 +210,9 @@ dummy4 (void)
 static void *
 start (void *arg UNUSED)
 {
+  int err = sem_wait (&gencore_go); // till main() finishes pthread_create
+  assert (err == 0);
+
   backtracegen ();
   /* Not reached.  */
   abort ();
@@ -227,10 +238,16 @@ main (int argc UNUSED, char **argv)
   dummy4 ();
   if (gencore)
     printf ("%ld\n", (long) getpid ());
+
+  int err = sem_init (&gencore_go, 0, 0);
+  assert (err == 0);
   pthread_t thread;
   int i = pthread_create (&thread, NULL, start, NULL);
-  // pthread_* functions do not set errno.
   assert (i == 0);
+  err = sem_post (&gencore_go); // we're ready for the child thread's mayhem
+  assert (err == 0);
+  // pthread_* functions do not set errno.
+  
   if (ptraceme)
     {
       errno = 0;
@@ -241,6 +258,7 @@ main (int argc UNUSED, char **argv)
     pthread_join (thread, NULL);
   else
     raise (SIGUSR2);
+  sem_destroy (&gencore_go);
   return 0;
 }
 

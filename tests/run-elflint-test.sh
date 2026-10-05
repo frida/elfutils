@@ -57,4 +57,12 @@ tempfiles testfile-s390x-hash-bothz
 testrun ${abs_top_builddir}/src/elfcompress -f -q --name='.s??tab' -o testfile-s390x-hash-bothz testfile-s390x-hash-both
 testrun ${abs_top_builddir}/src/elflint -q --gnu-ld testfile-s390x-hash-bothz
 
+# Recognize debug dwo sections
+testfiles testfile-hello4.dwo testfile-world4.dwo
+testfiles testfile-hello5.dwo testfile-world5.dwo
+testrun ${abs_top_builddir}/src/elflint -q --gnu --debug \
+	testfile-hello4.dwo testfile-world4.dwo
+testrun ${abs_top_builddir}/src/elflint -q --gnu --debug \
+	testfile-hello5.dwo testfile-world5.dwo
+
 exit 0

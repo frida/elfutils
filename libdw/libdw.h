@@ -1,5 +1,6 @@
 /* Interfaces for libdw.
    Copyright (C) 2002-2010, 2013, 2014, 2016, 2018 Red Hat, Inc.
+   Copyright (C) 2026 Mark J. Wielaard <mark@klomp.org>
    This file is part of elfutils.
 
    This file is free software; you can redistribute it and/or modify
@@ -42,6 +43,20 @@ typedef enum
     DWARF_C_WRITE,		/* Write .. */
   }
 Dwarf_Cmd;
+
+/* DWARF type. Either plain DWARF, split DWARF DWOs (including DWP
+   files) or GNU LTO.  When used with dwarf_begin_type or
+   dwarf_begin_elf_type DWARF_T_AUTO tries to get PLAIN, DWO, GNU_LTO
+   in that order.  Enum values have a numeric value indicating their
+   priority in auto mode.  */
+typedef enum
+  {
+    DWARF_T_AUTO    = 0,  /* Automatic selection (PLAIN > DWO > GNU_LTO).  */
+    DWARF_T_GNU_LTO = 16, /* GNU LTO (.gnu.debuglto_.debug_*).  */
+    DWARF_T_DWO     = 32, /* Split DWARF (.debug_*.dwo and dwp indexes).  */
+    DWARF_T_PLAIN   = 64, /* Standard DWARF (.debug_*).  */
+  }
+Dwarf_Type;
 
 
 /* Callback results.  */
@@ -234,11 +249,31 @@ typedef void (*__noreturn_attribute__ Dwarf_OOM) (void);
 extern "C" {
 #endif
 
-/* Create a handle for a new debug session.  */
+/* Create a handle for a new debug session.
+   Calls dwarf_begin_type (fildes, cmd, DWARF_T_AUTO).  */
 extern Dwarf *dwarf_begin (int fildes, Dwarf_Cmd cmd);
 
-/* Create a handle for a new debug session for an ELF file.  */
+/* Create a handle for a new debug session given a specific type.
+   When type is DWARF_T_AUTO will try to get PLAIN, DWO, GNU_LTO in
+   that order. Will return NULL if the requested type is not available
+   in the file. */
+extern Dwarf *dwarf_begin_type (int fildes, Dwarf_Cmd cmd, Dwarf_Type type);
+
+/* Create a handle for a new debug session for an ELF file.
+   Calls dwarf_begin_type (elf, cmd, DWARF_T_AUTO, scngrp).  */
 extern Dwarf *dwarf_begin_elf (Elf *elf, Dwarf_Cmd cmd, Elf_Scn *scngrp);
+
+/* Create a handle for a new debug session given a specific type.
+   When type is DWARF_T_AUTO will try to get PLAIN, DWO, GNU_LTO in
+   that order. Will return NULL if the requested type is not available
+   in the file. If scngrp isn't NULL it must be a SHT_GROUP section
+   and only sections in this group will be used.  */
+extern Dwarf *dwarf_begin_elf_type (Elf *elf, Dwarf_Cmd cmd, Dwarf_Type type,
+				     Elf_Scn *scngrp);
+
+/* Returns the DWARF type of the givn Dwarf descriptor.  Return
+   DWARF_T_AUTO (zero) if the descriptor is NULL.  */
+extern Dwarf_Type dwarf_get_type (Dwarf *dwarf);
 
 /* Retrieve ELF descriptor used for DWARF access.  */
 extern Elf *dwarf_getelf (Dwarf *dwarf);
@@ -579,15 +614,24 @@ extern int dwarf_bitoffset (Dwarf_Die *die);
 /* Return array order attribute of DIE.  */
 extern int dwarf_arrayorder (Dwarf_Die *die);
 
-/* Return source language attribute of DIE.  */
-extern int dwarf_srclang (Dwarf_Die *die);
+/* Return DW_LANG source language of CU DIE.
+   Returns the DW_LANG constant on success, -1 otherwise.  */
+extern int dwarf_srclang (Dwarf_Die *cudie);
+
+/* Provides the DW_LNAME source language and version of the given CU
+   DIE.  LVERSION may be NULL. Returns zero on success.  */
+extern int dwarf_language (Dwarf_Die *cudie,
+			   Dwarf_Word *lname,
+			   Dwarf_Word *lversion) __nonnull_attribute__ (2);
 
 
 /* Get abbreviation at given offset for given DIE.  */
 extern Dwarf_Abbrev *dwarf_getabbrev (Dwarf_Die *die, Dwarf_Off offset,
 				      size_t *lengthp);
 
-/* Get abbreviation at given offset in .debug_abbrev section.  */
+/* Get abbreviation at given offset in .debug_abbrev section.  On
+   success return zero and fills in ABBREVP.  When there is no (more)
+   abbrev at offset returns one.  On error returns a negative value.  */
 extern int dwarf_offabbrev (Dwarf *dbg, Dwarf_Off offset, size_t *lengthp,
 			    Dwarf_Abbrev *abbrevp)
      __nonnull_attribute__ (4);
@@ -827,11 +871,18 @@ extern int dwarf_getlocation_attr (Dwarf_Attribute *attr,
    For DW_TAG_array_type it can apply much more complex rules.  */
 extern int dwarf_aggregate_size (Dwarf_Die *die, Dwarf_Word *size);
 
-/* Given a language code, as returned by dwarf_srclan, get the default
-   lower bound for a subrange type without a lower bound attribute.
-   Returns zero on success or -1 on failure when the given language
-   wasn't recognized.  */
+/* Given a DW_LANG language code, as returned by dwarf_srclang, get
+   the default lower bound for a subrange type without a lower bound
+   attribute.  Returns zero on success or -1 on failure when the given
+   language wasn't recognized.  */
 extern int dwarf_default_lower_bound (int lang, Dwarf_Sword *result)
+  __nonnull_attribute__ (2);
+
+/* Given a DW_LNAME language code, as returned by dwarf_language, get
+   the default lower bound for a subrange type without a lower bound
+   attribute.  Returns zero on success or -1 on failure when the given
+   language wasn't recognized.  */
+extern int dwarf_language_lower_bound (Dwarf_Word lname, Dwarf_Sword *result)
   __nonnull_attribute__ (2);
 
 /* Return scope DIEs containing PC address.
@@ -1079,6 +1130,33 @@ extern int dwarf_frame_register (Dwarf_Frame *frame, int regno,
 				 Dwarf_Op ops_mem[3],
 				 Dwarf_Op **ops, size_t *nops)
   __nonnull_attribute__ (3, 4, 5);
+
+
+/* Return offset and/or size of CU's contribution to SECTION in a
+   DWARF package file.
+
+   If CU is not from a DWARF package file, the file does not have
+   SECTION, or CU does not contribute to SECTION, then *OFFSETP and
+   *SIZEP are set to 0 (this is not an error and the function will
+   return 0 in that case).
+
+   SECTION is a DW_SECT section identifier.  Note that the original
+   GNU DWARF package file extension for DWARF 4 used slightly
+   different section identifiers.  This function uses the standardized
+   section identifiers and maps the GNU DWARF 4 identifiers to their
+   standard DWARF 5 analogues: DW_SECT_LOCLISTS (5) refers to
+   .debug_locs.dwo for DWARF 4.  DW_SECT_MACRO (7) refers to
+   .debug_macinfo.dwo for DWARF 4 or .debug_macro.dwo for the GNU
+   .debug_macro extension for DWARF 4 (section identifier 8 is
+   DW_SECT_RNGLISTS in DWARF 5, NOT DW_SECT_MACRO like in the GNU
+   extension.)  .debug_types.dwo does not have a DWARF 5 equivalent,
+   so this function accepts the original DW_SECT_TYPES (2).
+
+   Returns 0 for success or -1 for errors reading the DWARF package
+   file data or if an unknown SECTION constant is given.  OFFSETP and
+   SIZEP may be NULL.  */
+extern int dwarf_cu_dwp_section_info (Dwarf_CU *cu, unsigned int section,
+				      Dwarf_Off *offsetp, Dwarf_Off *sizep);
 
 
 /* Return error code of last failing function call.  This value is kept

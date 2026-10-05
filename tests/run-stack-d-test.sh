@@ -68,11 +68,6 @@ else
 STACKCMD=${abs_top_builddir}/src/stack
 fi
 
-# Disable valgrind while dumping because of a bug unmapping libc.so.
-# https://bugs.kde.org/show_bug.cgi?id=327427
-SAVED_VALGRIND_CMD="$VALGRIND_CMD"
-unset VALGRIND_CMD
-
 # Without -d the top function comes out as fu. Use --raw to not demangle.
 testrun_compare ${abs_top_builddir}/src/stack -r -n 2 -e testfiledwarfinlines --core testfiledwarfinlines.core<<EOF
 PID 13654 - core
@@ -113,10 +108,5 @@ TID 13654:
     /home/mark/src/tests/dwarfinlines.cpp:39
 $STACKCMD: tid 13654: shown max number of frames (2, use -n 0 for unlimited)
 EOF
-
-if [ "x$SAVED_VALGRIND_CMD" != "x" ]; then
-  VALGRIND_CMD="$SAVED_VALGRIND_CMD"
-  export VALGRIND_CMD
-fi
 
 exit 0

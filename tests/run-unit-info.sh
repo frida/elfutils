@@ -27,6 +27,11 @@ testfiles testfile_multi_main testfile_multi.dwz
 
 testrun ${abs_builddir}/unit-info testfile_multi_main
 
+# see run-dwelf-dwarf-debug-sup.sh
+testfiles testfile-dwarf5-ref-sup testfile-dwarf5.sup
+
+testrun ${abs_builddir}/unit-info testfile-dwarf5-ref-sup
+
 # see tests/run-dwflsyms.sh
 testfiles testfilebazdbgppc64.debug
 
@@ -71,6 +76,23 @@ Iterate no info, compare recorded info with dwarf_cu_info.
 0 subdietag: 11, subtag: 0, version 5, unit_type 5
 1 re dietag: 4a, subtag: 11, version 5, unit_type 4
 1 subdietag: 11, subtag: 0, version 5, unit_type 5
+
+EOF
+
+# Single file split-dwarf. dwo sections in the plain debug file.
+#
+# echo "int frob (void) { return 42; }" \
+# | clang -g -gsplit-dwarf=single -xc - -c -o testfile-frob-single
+testfiles testfile-frob-single
+testrun_compare ${abs_builddir}/unit-info testfile-frob-single <<\EOF
+file: testfile-frob-single
+Iterate getting all info, compare with dwarf_cu_info.
+0 cu dietag: 4a, subtag: 11, version 5, unit_type 4
+0 subdietag: 11, subtag: 0, version 5, unit_type 5
+rechecking: testfile-frob-single
+Iterate no info, compare recorded info with dwarf_cu_info.
+0 re dietag: 4a, subtag: 11, version 5, unit_type 4
+0 subdietag: 11, subtag: 0, version 5, unit_type 5
 
 EOF
 

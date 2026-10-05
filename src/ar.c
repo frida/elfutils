@@ -24,7 +24,6 @@
 #include <assert.h>
 #include <fcntl.h>
 #include <gelf.h>
-#include <libintl.h>
 #include <limits.h>
 #include <locale.h>
 #include <search.h>
@@ -42,6 +41,7 @@
 #include <system.h>
 #include <printversion.h>
 
+#include "libeu.h"
 #include "arlib.h"
 
 
@@ -155,10 +155,11 @@ main (int argc, char *argv[])
 
   /* For historical reasons the options in the first parameter need
      not be preceded by a dash.  Add it now if necessary.  */
+  char *newp = NULL;
   if (argc > 1 && argv[1][0] != '-')
     {
       size_t len = strlen (argv[1]) + 1;
-      char *newp = alloca (len + 1);
+      newp = (char *) xmalloc (len + 1);
       newp[0] = '-';
       memcpy (&newp[1], argv[1], len);
       argv[1] = newp;
@@ -271,6 +272,8 @@ MEMBER parameter required for 'a', 'b', and 'i' modifiers"));
       status = 1;
       break;
     }
+
+  free (newp);
 
   return status;
 }
@@ -386,8 +389,8 @@ open_archive (const char *arfname, int flags, int mode, Elf **elf,
       if (miss_allowed)
 	return -1;
 
-      error (EXIT_FAILURE, errno, _("cannot open archive '%s'"),
-	     arfname);
+      error_exit (errno, _("cannot open archive '%s'"),
+		  arfname);
     }
 
   if (elf != NULL)
@@ -396,16 +399,16 @@ open_archive (const char *arfname, int flags, int mode, Elf **elf,
 
       *elf = elf_begin (fd, cmd, NULL);
       if (*elf == NULL)
-	error (EXIT_FAILURE, 0, _("cannot open archive '%s': %s"),
-	       arfname, elf_errmsg (-1));
+	error_exit (0, _("cannot open archive '%s': %s"),
+		    arfname, elf_errmsg (-1));
 
       if (flags == O_RDONLY && elf_kind (*elf) != ELF_K_AR)
-	error (EXIT_FAILURE, 0, _("%s: not an archive file"), arfname);
+	error_exit (0, _("%s: not an archive file"), arfname);
     }
 
   if (st != NULL && fstat (fd, st) != 0)
-    error (EXIT_FAILURE, errno, _("cannot stat archive '%s'"),
-	   arfname);
+    error_exit (errno, _("cannot stat archive '%s'"),
+		arfname);
 
   return fd;
 }
@@ -469,14 +472,13 @@ do_oper_extract (int oper, const char *arfname, char **argv, int argc,
   int fd = open_archive (arfname, O_RDONLY, 0, &elf, NULL, false);
 
   if (hcreate (2 * argc) == 0)
-    error (EXIT_FAILURE, errno, _("cannot create hash table"));
+    error_exit (errno, _("cannot create hash table"));
 
   for (int cnt = 0; cnt < argc; ++cnt)
     {
       ENTRY entry = { .key = argv[cnt], .data = &argv[cnt] };
       if (hsearch (entry, ENTER) == NULL)
-	error (EXIT_FAILURE, errno,
-	       _("cannot insert into hash table"));
+	error_exit (errno, _("cannot insert into hash table"));
     }
 
   struct stat st;
@@ -496,6 +498,8 @@ do_oper_extract (int oper, const char *arfname, char **argv, int argc,
   while ((subelf = elf_begin (fd, cmd, elf)) != NULL)
     {
       Elf_Arhdr *arhdr = elf_getarhdr (subelf);
+      if (arhdr == NULL)
+	goto next;
 
       if (strcmp (arhdr->ar_name, "/") == 0)
 	{
@@ -519,7 +523,7 @@ do_oper_extract (int oper, const char *arfname, char **argv, int argc,
 	  ENTRY entry;
 	  entry.key = arhdr->ar_name;
 	  ENTRY *res = hsearch (entry, FIND);
-	  if (res != NULL && (instance < 0 || instance-- == 0)
+	  if (res != NULL && (instance < 0 || --instance == 0)
 	      && !found[(char **) res->data - argv])
 	    found[(char **) res->data - argv] = do_extract = true;
 	}
@@ -806,9 +810,9 @@ cannot rename temporary file to %.*s"),
 	      if (fchown (newfd, st.st_uid, st.st_gid) != 0) { ; }
 	      /* Set the mode of the new file to the same values the
 		 original file has.  */
-	      if (fchmod (newfd, st.st_mode & ALLPERMS) != 0
-		  || close (newfd) != 0)
+	      if (fchmod (newfd, st.st_mode & ALLPERMS) != 0)
 		goto nonew_unlink;
+	      close (newfd);
 	      newfd = -1;
 	      if (rename (tmpfname, arfname) != 0)
 		goto nonew_unlink;
@@ -924,14 +928,13 @@ do_oper_delete (const char *arfname, char **argv, int argc,
   int fd = open_archive (arfname, O_RDONLY, 0, &elf, &st, false);
 
   if (hcreate (2 * argc) == 0)
-    error (EXIT_FAILURE, errno, _("cannot create hash table"));
+    error_exit (errno, _("cannot create hash table"));
 
   for (int cnt = 0; cnt < argc; ++cnt)
     {
       ENTRY entry = { .key = argv[cnt], .data = &argv[cnt] };
       if (hsearch (entry, ENTER) == NULL)
-	error (EXIT_FAILURE, errno,
-	       _("cannot insert into hash table"));
+	error_exit (errno, _("cannot insert into hash table"));
     }
 
   arlib_init ();
@@ -942,6 +945,8 @@ do_oper_delete (const char *arfname, char **argv, int argc,
   while ((subelf = elf_begin (fd, cmd, elf)) != NULL)
     {
       Elf_Arhdr *arhdr = elf_getarhdr (subelf);
+      if (arhdr == NULL)
+	goto next;
 
       /* Ignore the symbol table and the long file name table here.  */
       if (strcmp (arhdr->ar_name, "/") == 0
@@ -954,7 +959,7 @@ do_oper_delete (const char *arfname, char **argv, int argc,
 	  ENTRY entry;
 	  entry.key = arhdr->ar_name;
 	  ENTRY *res = hsearch (entry, FIND);
-	  if (res != NULL && (instance < 0 || instance-- == 0)
+	  if (res != NULL && (instance < 0 || --instance == 0)
 	      && !found[(char **) res->data - argv])
 	    found[(char **) res->data - argv] = do_delete = true;
 	}
@@ -1060,9 +1065,9 @@ do_oper_delete (const char *arfname, char **argv, int argc,
      setting the mode (which might be reset/ignored if the owner is
      wrong.  */
   if (fchown (newfd, st.st_uid, st.st_gid) != 0) { ; }
-  if (fchmod (newfd, st.st_mode & ALLPERMS) != 0
-      || close (newfd) != 0)
+  if (fchmod (newfd, st.st_mode & ALLPERMS) != 0)
     goto nonew_unlink;
+  close (newfd);
   newfd = -1;
   if (rename (tmpfname, arfname) != 0)
     goto nonew_unlink;
@@ -1131,16 +1136,15 @@ do_oper_insert (int oper, const char *arfname, char **argv, int argc,
   if (oper != oper_qappend)
     {
       if (hcreate (2 * argc) == 0)
-	error (EXIT_FAILURE, errno, _("cannot create hash table"));
+	error_exit (errno, _("cannot create hash table"));
 
       for (int cnt = 0; cnt < argc; ++cnt)
 	{
 	  ENTRY entry;
-	  entry.key = full_path ? argv[cnt] : basename (argv[cnt]);
+	  entry.key = full_path ? argv[cnt] : (char*)xbasename (argv[cnt]);
 	  entry.data = &argv[cnt];
 	  if (hsearch (entry, ENTER) == NULL)
-	    error (EXIT_FAILURE, errno,
-		   _("cannot insert into hash table"));
+	    error_exit (errno, _("cannot insert into hash table"));
 	}
     }
 
@@ -1152,6 +1156,8 @@ do_oper_insert (int oper, const char *arfname, char **argv, int argc,
   while ((subelf = elf_begin (fd, cmd, elf)) != NULL)
     {
       Elf_Arhdr *arhdr = elf_getarhdr (subelf);
+      if (arhdr == NULL)
+	goto next;
 
       /* Ignore the symbol table and the long file name table here.  */
       if (strcmp (arhdr->ar_name, "/") == 0
@@ -1214,7 +1220,7 @@ do_oper_insert (int oper, const char *arfname, char **argv, int argc,
     next:
       cmd = elf_next (subelf);
       if (elf_end (subelf) != 0)
-	error (EXIT_FAILURE, 0, "%s: %s", arfname, elf_errmsg (-1));
+	error_exit (0, "%s: %s", arfname, elf_errmsg (-1));
     }
 
   if (oper != oper_qappend)
@@ -1222,8 +1228,8 @@ do_oper_insert (int oper, const char *arfname, char **argv, int argc,
 
  no_old:
   if (member != NULL)
-    error (EXIT_FAILURE, 0, _("position member %s not found"),
-	   member);
+    error_exit (0, _("position member %s not found"),
+		member);
 
   if (oper == oper_move)
     {
@@ -1246,7 +1252,7 @@ do_oper_insert (int oper, const char *arfname, char **argv, int argc,
       /* Open all the new files, get their sizes and add all symbols.  */
       for (int cnt = 0; cnt < argc; ++cnt)
 	{
-	  const char *bname = basename (argv[cnt]);
+	  const char *bname = xbasename (argv[cnt]);
 	  size_t bnamelen = strlen (bname);
 	  if (found[cnt] == NULL)
 	    {
@@ -1305,8 +1311,8 @@ do_oper_insert (int oper, const char *arfname, char **argv, int argc,
 	      found[cnt]->mem = elf_rawfile (newelf, &found[cnt]->size);
 	      if (found[cnt]->mem == NULL
 		  || elf_cntl (newelf, ELF_C_FDDONE) != 0)
-		error (EXIT_FAILURE, 0, _("cannot read %s: %s"),
-		       argv[cnt], elf_errmsg (-1));
+		error_exit (0, _("cannot read %s: %s"),
+			    argv[cnt], elf_errmsg (-1));
 
 	      close (newfd);
 
@@ -1374,7 +1380,7 @@ do_oper_insert (int oper, const char *arfname, char **argv, int argc,
 		|| (arhdr = elf_getarhdr (subelf)) == NULL)
 	      /* This should never happen since we already looked at the
 		 archive content.  But who knows...  */
-	      error (EXIT_FAILURE, 0, "%s: %s", arfname, elf_errmsg (-1));
+	      error_exit (0, "%s: %s", arfname, elf_errmsg (-1));
 
 	    arlib_add_symbols (subelf, arfname, arhdr->ar_name, cur_off);
 
@@ -1547,9 +1553,9 @@ do_oper_insert (int oper, const char *arfname, char **argv, int argc,
 	 setting the modes, or they might be reset/ignored if the
 	 owner is wrong.  */
       if (fchown (newfd, st.st_uid, st.st_gid) != 0) { ; }
-      if (fchmod (newfd, st.st_mode & ALLPERMS) != 0
-	  || close (newfd) != 0)
+      if (fchmod (newfd, st.st_mode & ALLPERMS) != 0)
         goto nonew_unlink;
+      close (newfd);
       newfd = -1;
       if (rename (tmpfname, arfname) != 0)
 	goto nonew_unlink;

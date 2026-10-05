@@ -29,12 +29,16 @@
 
 #include <config.h>
 #include "libdwflP.h"
-#include "../libdw/memory-access.h"
+#include "memory-access.h"
 #include "system.h"
 
-#include <byteswap.h>
-#include <endian.h>
 #include <fcntl.h>
+
+#ifdef HAVE_OPENAT2_RESOLVE_IN_ROOT
+#include <linux/openat2.h>
+#include <sys/syscall.h>
+#include <unistd.h>
+#endif
 
 /* This element is always provided and always has a constant value.
    This makes it an easy thing to scan for to discern the format.  */
@@ -257,7 +261,8 @@ read_addrs (struct memory_closure *closure,
   /* Read a new buffer if the old one doesn't cover these words.  */
   if (*buffer == NULL
       || vaddr < *read_vaddr
-      || vaddr - (*read_vaddr) + nb > *buffer_available)
+      || nb > *buffer_available
+      || vaddr - (*read_vaddr) > *buffer_available - nb)
     {
       release_buffer (closure, buffer, buffer_available, 0);
 
@@ -270,26 +275,25 @@ read_addrs (struct memory_closure *closure,
 	return true;
     }
 
-  Elf32_Addr (*a32)[n] = vaddr - (*read_vaddr) + (*buffer);
-  Elf64_Addr (*a64)[n] = (void *) a32;
+  unsigned char *addr = vaddr - (*read_vaddr) + (*buffer);
 
   if (elfclass == ELFCLASS32)
     {
       if (elfdata == ELFDATA2MSB)
 	for (size_t i = 0; i < n; ++i)
-	  addrs[i] = BE32 (read_4ubyte_unaligned_noncvt (&(*a32)[i]));
+	  addrs[i] = BE32 (read_4ubyte_unaligned_noncvt (addr + i * 4));
       else
 	for (size_t i = 0; i < n; ++i)
-	  addrs[i] = LE32 (read_4ubyte_unaligned_noncvt (&(*a32)[i]));
+	  addrs[i] = LE32 (read_4ubyte_unaligned_noncvt (addr + i * 4));
     }
   else
     {
       if (elfdata == ELFDATA2MSB)
 	for (size_t i = 0; i < n; ++i)
-	  addrs[i] = BE64 (read_8ubyte_unaligned_noncvt (&(*a64)[i]));
+	  addrs[i] = BE64 (read_8ubyte_unaligned_noncvt (addr + i * 8));
       else
 	for (size_t i = 0; i < n; ++i)
-	  addrs[i] = LE64 (read_8ubyte_unaligned_noncvt (&(*a64)[i]));
+	  addrs[i] = LE64 (read_8ubyte_unaligned_noncvt (addr + i * 8));
     }
 
   return false;
@@ -333,11 +337,17 @@ report_r_debug (uint_fast8_t elfclass, uint_fast8_t elfdata,
   int result = 0;
 
   /* There can't be more elements in the link_map list than there are
-     segments.  DWFL->lookup_elts is probably twice that number, so it
-     is certainly above the upper bound.  If we iterate too many times,
-     there must be a loop in the pointers due to link_map clobberation.  */
+     segments.  A segment is created for each PT_LOAD and there can be
+     up to 5 per module (-z separate-code, tends to create four LOAD
+     segments, gold has -z text-unlikely-segment, which might result
+     in creating that number of load segments) DWFL->lookup_elts is
+     probably twice the number of modules, so that multiplied by max
+     PT_LOADs is certainly above the upper bound.  If we iterate too
+     many times, there must be a loop in the pointers due to link_map
+     clobberation.  */
+#define MAX_PT_LOAD 5
   size_t iterations = 0;
-  while (next != 0 && ++iterations < dwfl->lookup_elts)
+  while (next != 0 && ++iterations < dwfl->lookup_elts * MAX_PT_LOAD)
     {
       if (read_addrs (&memory_closure, elfclass, elfdata,
 		      &buffer, &buffer_available, next, &read_vaddr,
@@ -395,8 +405,8 @@ report_r_debug (uint_fast8_t elfclass, uint_fast8_t elfdata,
 	  r_debug_info_module = malloc (sizeof (*r_debug_info_module)
 					+ strlen (name1) + 1);
 	  if (unlikely (r_debug_info_module == NULL))
-	    release_buffer (&memory_closure, &buffer,
-                            &buffer_available, result);
+	    return release_buffer (&memory_closure, &buffer,
+				   &buffer_available, -1);
 	  r_debug_info_module->fd = -1;
 	  r_debug_info_module->elf = NULL;
 	  r_debug_info_module->l_ld = l_ld;
@@ -412,8 +422,53 @@ report_r_debug (uint_fast8_t elfclass, uint_fast8_t elfdata,
       if (name != NULL)
 	{
 	  /* This code is mostly inlined dwfl_report_elf.  */
-	  // XXX hook for sysroot
-	  int fd = open (name, O_RDONLY);
+	  char *sysroot_name = NULL;
+	  const char *sysroot = dwfl->sysroot;
+	  int fd;
+
+	  /* Don't use the sysroot if the path is already inside it.  */
+	  bool name_in_sysroot = sysroot && startswith (name, sysroot);
+
+	  if (sysroot && !name_in_sysroot)
+	    {
+	      if (asprintf (&sysroot_name, "%s%s", sysroot, name) < 0)
+		return release_buffer (&memory_closure, &buffer, &buffer_available, -1);
+
+#ifdef HAVE_OPENAT2_RESOLVE_IN_ROOT
+	      /* The original name does not contain the sysroot as a prefix.
+		 Save this for use with openat2.  */
+	      const char *name_no_sysroot = name;
+#endif
+	      name = sysroot_name;
+
+#ifdef HAVE_OPENAT2_RESOLVE_IN_ROOT
+	      int sysrootfd, err;
+
+	      struct open_how how = {
+		.flags = O_RDONLY,
+		.resolve = RESOLVE_IN_ROOT,
+	      };
+
+	      sysrootfd = open (sysroot, O_DIRECTORY|O_PATH);
+	      if (sysrootfd < 0)
+		return -1;
+
+	      fd = syscall (SYS_openat2, sysrootfd, name_no_sysroot,
+			    &how, sizeof(how));
+	      err = fd < 0 ? -errno : 0;
+
+	      close (sysrootfd);
+
+	      /* Fallback to regular open() if openat2 is not available. */
+	      if (fd < 0 && err == -ENOSYS)
+#endif
+		{
+		  fd = open (name, O_RDONLY);
+		}
+	    }
+	  else
+	      fd = open (name, O_RDONLY);
+
 	  if (fd >= 0)
 	    {
 	      Elf *elf;
@@ -471,7 +526,7 @@ report_r_debug (uint_fast8_t elfclass, uint_fast8_t elfdata,
 		      if (r_debug_info_module == NULL)
 			{
 			  // XXX hook for sysroot
-			  mod = __libdwfl_report_elf (dwfl, basename (name),
+			  mod = __libdwfl_report_elf (dwfl, xbasename (name),
 						      name, fd, elf, base,
 						      true, true);
 			  if (mod != NULL)
@@ -498,6 +553,7 @@ report_r_debug (uint_fast8_t elfclass, uint_fast8_t elfdata,
 		    close (fd);
 		}
 	    }
+	  free(sysroot_name);
 	}
 
       if (mod != NULL)
@@ -890,6 +946,11 @@ dwfl_link_map_report (Dwfl *dwfl, const void *auxv, size_t auxv_size,
 		{
 		  nbytes = in.d_size;
 		  phnum = nbytes / phent;
+		  if (phnum == 0)
+		    {
+		      __libdwfl_seterrno (DWFL_E_BADELF);
+		      return false;
+		    }
 		}
 	      void *buf = malloc (nbytes);
 	      Elf32_Phdr (*p32)[phnum] = buf;
@@ -917,11 +978,20 @@ dwfl_link_map_report (Dwfl *dwfl, const void *auxv, size_t auxv_size,
 		      return false;
 		    }
 		}
+	      bool is32 = (elfclass == ELFCLASS32);
+	      size_t phdr_align = (is32
+				   ? __alignof__ (Elf32_Phdr)
+				   : __alignof__ (Elf64_Phdr));
+	      if (!in_from_exec
+		  && ((uintptr_t) in.d_buf & (phdr_align - 1)) != 0)
+		{
+		  memcpy (out.d_buf, in.d_buf, in.d_size);
+		  in.d_buf = out.d_buf;
+		}
 	      if (likely ((elfclass == ELFCLASS32
 			   ? elf32_xlatetom : elf64_xlatetom)
 			  (&out, &in, elfdata) != NULL))
 		{
-		  bool is32 = (elfclass == ELFCLASS32);
 		  for (size_t i = 0; i < phnum; ++i)
 		    {
 		      GElf_Word type = (is32
@@ -1017,9 +1087,12 @@ dwfl_link_map_report (Dwfl *dwfl, const void *auxv, size_t auxv_size,
 	         in.d_size. The data might have been truncated.  */
 	      if (dyn_filesz > in.d_size)
 		dyn_filesz = in.d_size;
+	      if (dyn_filesz / entsize == 0)
+		{
+		  __libdwfl_seterrno (DWFL_E_BADELF);
+		  return false;
+		}
 	      void *buf = malloc (dyn_filesz);
-	      Elf32_Dyn (*d32)[dyn_filesz / sizeof (Elf32_Dyn)] = buf;
-	      Elf64_Dyn (*d64)[dyn_filesz / sizeof (Elf64_Dyn)] = buf;
 	      if (unlikely (buf == NULL))
 		{
 		  __libdwfl_seterrno (DWFL_E_NOMEM);
@@ -1034,6 +1107,14 @@ dwfl_link_map_report (Dwfl *dwfl, const void *auxv, size_t auxv_size,
 		};
 	      if (in.d_size > out.d_size)
 		in.d_size = out.d_size;
+	      size_t dyn_align = (elfclass == ELFCLASS32
+			          ? __alignof__ (Elf32_Dyn)
+				  : __alignof__ (Elf64_Dyn));
+	      if (((uintptr_t) in.d_buf & (dyn_align - 1)) != 0)
+		{
+		  memcpy (out.d_buf, in.d_buf, in.d_size);
+		  in.d_buf = out.d_buf;
+		}
 	      if (likely ((elfclass == ELFCLASS32
 			   ? elf32_xlatetom : elf64_xlatetom)
 			  (&out, &in, elfdata) != NULL))
@@ -1041,6 +1122,7 @@ dwfl_link_map_report (Dwfl *dwfl, const void *auxv, size_t auxv_size,
 		  /* We are looking for DT_DEBUG.  */
 		  if (elfclass == ELFCLASS32)
 		    {
+		      Elf32_Dyn (*d32)[dyn_filesz / sizeof (Elf32_Dyn)] = buf;
 		      size_t n = dyn_filesz / sizeof (Elf32_Dyn);
 		      for (size_t i = 0; i < n; ++i)
 			if ((*d32)[i].d_tag == DT_DEBUG)
@@ -1051,6 +1133,7 @@ dwfl_link_map_report (Dwfl *dwfl, const void *auxv, size_t auxv_size,
 		    }
 		  else
 		    {
+		      Elf64_Dyn (*d64)[dyn_filesz / sizeof (Elf64_Dyn)] = buf;
 		      size_t n = dyn_filesz / sizeof (Elf64_Dyn);
 		      for (size_t i = 0; i < n; ++i)
 			if ((*d64)[i].d_tag == DT_DEBUG)

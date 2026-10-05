@@ -366,3 +366,69 @@ ELFUTILS_0.186 {
     dwarf_linecontext;
     dwarf_linefunctionname;
 } ELFUTILS_0.177;
+
+ELFUTILS_0.188 {
+  global:
+    dwfl_get_debuginfod_client;
+    dwfl_frame_reg;
+    dwfl_report_offline_memory;
+} ELFUTILS_0.186;
+
+ELFUTILS_0.191 {
+  global:
+    dwarf_cu_dwp_section_info;
+} ELFUTILS_0.188;
+
+ELFUTILS_0.192 {
+  global:
+    dwfl_set_sysroot;
+    dwfl_frame_unwound_source;
+    dwfl_unwound_source_str;
+} ELFUTILS_0.191;
+
+ELFUTILS_0.193 {
+  global:
+    dwarf_language;
+    dwarf_language_lower_bound;
+} ELFUTILS_0.192;
+
+ELFUTILS_0.196 {
+  global:
+    dwelf_dwarf_debug_sup;
+    dwelf_dwarf_debug_dwp;
+    dwarf_begin_type;
+    dwarf_get_type;
+} ELFUTILS_0.193;
+
+ELFUTILS_0.197 {
+  global:
+    dwarf_begin_elf_type;
+} ELFUTILS_0.196;
+
+/* XXX Experimental libdwfl_stacktrace API. */
+ELFUTILS_0.193_EXPERIMENTAL {
+  global:
+    dwflst_perf_sample_preferred_regs_mask;
+    dwflst_tracker_begin;
+    dwflst_tracker_dwfl_begin;
+    dwflst_tracker_end;
+    dwflst_tracker_find_cached_elf;
+    dwflst_tracker_cache_elf;
+    dwflst_module_gettracker;
+    dwflst_tracker_linux_proc_find_elf;
+    dwflst_tracker_find_pid;
+    dwflst_perf_sample_getframes;
+};
+
+ELFUTILS_0.194_EXPERIMENTAL {
+  global:
+    dwflst_sample_getframes;
+} ELFUTILS_0.193_EXPERIMENTAL;
+
+ELFUTILS_0.196_EXPERIMENTAL {
+  global:
+    dwflst_arch_from_uname;
+    dwflst_arch_expected_frame_nregs;
+    dwflst_arch_sp_dwarf_reg;
+    dwflst_arch_sp_perf_reg;
+} ELFUTILS_0.194_EXPERIMENTAL;

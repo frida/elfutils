@@ -33,8 +33,6 @@
 #include "libdwflP.h"
 #include "system.h"
 
-#include <unistd.h>
-
 #ifdef LZMA
 # define USE_INFLATE	1
 # include <lzma.h>
@@ -214,6 +212,7 @@ unzip (int fd, off_t start_offset,
       else
 	{
 	  state.input_buffer = *state.whole;
+	  mapped = state.input_buffer;
 	  state.input_pos = state.mapped_size = *whole_size;
 	}
     }
@@ -229,7 +228,7 @@ unzip (int fd, off_t start_offset,
 #endif
       )
     /* Not a compressed file.  */
-    return DWFL_E_BADELF;
+    return fail (&state, DWFL_E_BADELF);
 
 #ifdef ZSTD
   /* special case for libzstd since it is slightly different from the

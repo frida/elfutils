@@ -1,6 +1,7 @@
 ## Process this file with automake to create Makefile.in
 ##
 ## Copyright (C) 1996-2010, 2015 Red Hat, Inc.
+## Copyright (C) 2025 Mark J. Wielaard <mark@klomp.org>
 ## This file is part of elfutils.
 ##
 ## This file is free software; you can redistribute it and/or modify
@@ -36,14 +37,12 @@ VERSION = 1
 
 lib_LIBRARIES = libelf.a
 noinst_LIBRARIES = libelf_pic.a
-if ELFSO
 noinst_DATA = $(noinst_LIBRARIES:_pic.a=.so)
-endif
 include_HEADERS = libelf.h gelf.h nlist.h
 
 noinst_HEADERS = abstract.h common.h exttypes.h gelf_xlate.h libelfP.h \
 		 version_xlate.h gnuhash_xlate.h note_xlate.h dl-hash.h \
-		 chdr_xlate.h
+		 chdr_xlate.h elf32_getchdr.h
 
 if INSTALL_ELFH
 include_HEADERS += elf.h
@@ -104,12 +103,11 @@ libelf_a_SOURCES = elf_version.c elf_hash.c elf_error.c elf_fill.c \
 		   elf32_getchdr.c elf64_getchdr.c gelf_getchdr.c \
 		   elf_compress.c elf_compress_gnu.c
 
-if ELFSO
 libelf_pic_a_SOURCES =
-am_libelf_pic_a_OBJECTS = $(libelf_a_SOURCES:.c=.os)
+am_libelf_pic_a_OBJECTS = $(libelf_a_SOURCES:.c=_.os)
 
 libelf_so_DEPS = ../lib/libeu.a
-libelf_so_LDLIBS = $(libelf_so_DEPS) -lz
+libelf_so_LDLIBS = $(libelf_so_DEPS) -lz $(zstd_LIBS)
 if USE_LOCKS
 libelf_so_LDLIBS += -lpthread
 endif
@@ -118,11 +116,15 @@ libelf_so_LIBS = libelf_pic.a
 libelf.so: $(srcdir)/libelf.map $(libelf_so_LIBS) $(libelf_so_DEPS)
 	$(AM_V_CCLD)$(LINK) $(dso_LDFLAGS) -o $@ \
 		-Wl,--soname,$@.$(VERSION) \
-		-Wl,--version-script,$<,--no-undefined \
+		-Wl,--version-script,$< \
+		$(NO_UNDEFINED) \
 		-Wl,--whole-archive $(libelf_so_LIBS) -Wl,--no-whole-archive \
 		$(libelf_so_LDLIBS)
 	@$(textrel_check)
 	$(AM_V_at)ln -fs $@ $@.$(VERSION)
+
+libeu_objects = $(shell cat ../lib/libeu.manifest)
+libelf_a_LIBADD = $(addprefix ../lib/,$(libeu_objects))
 
 install: install-am libelf.so
 	$(mkinstalldirs) $(DESTDIR)$(libdir)
@@ -135,9 +137,24 @@ uninstall: uninstall-am
 	rm -f $(DESTDIR)$(libdir)/libelf.so.$(VERSION)
 	rm -f $(DESTDIR)$(libdir)/libelf.so
 
-CLEANFILES += libelf.so libelf.so.$(VERSION)
-endif
-
 EXTRA_DIST = libelf.map
 
-CLEANFILES += $(am_libelf_pic_a_OBJECTS)
+EXTRA_libelf_a_DEPENDENCIES = libelf.manifest
+
+libelf.manifest: $(libelf_a_OBJECTS)
+	$(AM_V_GEN)echo $^ > $@
+
+MOSTLYCLEANFILES = $(am_libelf_a_OBJECTS) $(am_libelf_pic_a_OBJECTS) libelf.so.$(VERSION)
+CLEANFILES = libelf.so $(EXTRA_libelf_a_DEPENDENCIES)
+
+# Internal checks
+check_PROGRAMS = gelf_fsize_check
+TESTS = $(check_PROGRAMS)
+
+CHECK_DEF_FLAGS = $(DEFS) $(AM_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) \
+       $(DEFAULT_INCLUDES) -Wl,-rpath,../libelf -DMAIN_CHECK=1
+
+.SECONDEXPANSION:
+gelf_fsize_check$(EXEEXT): $$(filter-out $$(subst _check,,$$@).o,$(libelf_a_OBJECTS)) $$(subst _check,,$$@).c
+	$(AM_V_CC)$(CC) $(CHECK_DEF_FLAGS) -o $@ $^ $(filter-out libelf_pic.a,$(libelf_so_LIBS)) $(libelf_so_LDLIBS)
+nodist_gelf_fsize_check_SOURCES = gelf_fsize_check.c

@@ -1,5 +1,5 @@
 /* Interface for libebl.
-   Copyright (C) 2000-2010, 2013, 2014, 2015, 2016, 2017 Red Hat, Inc.
+   Copyright (C) 2000-2010, 2013, 2014, 2015, 2016, 2017, 2025 Red Hat, Inc.
    This file is part of elfutils.
 
    This file is free software; you can redistribute it and/or modify
@@ -338,6 +338,49 @@ extern bool ebl_set_initial_registers_tid (Ebl *ebl,
 /* Number of registers to allocate for ebl_set_initial_registers_tid.
    EBL architecture can unwind iff EBL_FRAME_NREGS > 0.  */
 extern size_t ebl_frame_nregs (Ebl *ebl)
+  __nonnull_attribute__ (1);
+
+/* Callback to set process data from a register sample.  For each item
+   in REGS, the REGS_MAPPING array specifies its position in the full
+   register file expected by the DWARF infrastructure.  */
+extern bool ebl_set_initial_registers_sample (Ebl *ebl,
+					      const Dwarf_Word *regs,
+					      uint32_t n_regs,
+					      const int *regs_mapping,
+					      size_t n_regs_mapping,
+					      ebl_tid_registers_t *setfunc,
+					      void *arg)
+  __nonnull_attribute__ (1, 2, 6);
+
+/* Extract stack address SP and instruction pointer PC from a register
+   sample.  For each item in REGS, the REGS_MAPPING array specifies
+   its position in the full register file expected by the DWARF
+   infrastructure.  */
+extern bool ebl_sample_sp_pc (Ebl *ebl,
+			      const Dwarf_Word *regs, uint32_t n_regs,
+			      const int *regs_mapping, size_t n_regs_mapping,
+			      Dwarf_Word *sp, Dwarf_Word *pc)
+  __nonnull_attribute__ (1, 2, 4);
+
+/* Translate from linux perf_events PERF_REGS_MASK and ABI to a generic
+   REGS_MAPPING array for use with ebl_set_initial_registers_sample().
+   EBL architecture has to have EBL_PERF_FRAME_REGS_MASK > 0,
+   otherwise the backend doesn't support unwinding from perf_events
+   sample data.  The PERF_REGS_MASK and REGS_MAPPING are likely but
+   not guaranteed to stay constant throughout a profiling session, and
+   so the result is cached in the Ebl and only recomputed if an
+   unexpected PERF_REGS_MASK is passed to this function.  */
+extern bool ebl_sample_perf_regs_mapping (Ebl *ebl,
+					  uint64_t perf_regs_mask,
+					  uint32_t abi,
+					  const int **regs_mapping,
+					  size_t *n_regs_mapping)
+  __nonnull_attribute__ (1, 4, 5);
+
+/* Preferred sample_regs_user mask to request from linux perf_events
+   to allow unwinding on EBL architecture.  Omitting some of these
+   registers may result in failed or inaccurate unwinding.  */
+extern uint64_t ebl_perf_frame_regs_mask (Ebl *ebl)
   __nonnull_attribute__ (1);
 
 /* Offset to apply to the value of the return_address_register, as

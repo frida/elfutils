@@ -1,5 +1,6 @@
 /* Find debugging and symbol information for a module in libdwfl.
-   Copyright (C) 2005-2012, 2014, 2015 Red Hat, Inc.
+   Copyright (C) 2005-2012, 2014, 2015, 2025 Red Hat, Inc.
+   Copyright (C) 2025 Mark J. Wielaard <mark@klomp.org>
    This file is part of elfutils.
 
    This file is free software; you can redistribute it and/or modify
@@ -34,9 +35,9 @@
 #include <inttypes.h>
 #include <fcntl.h>
 #include <string.h>
-#include <unistd.h>
-#include "../libdw/libdwP.h"	/* DWARF_E_* values are here.  */
-#include "../libelf/libelfP.h"
+#include "libdwP.h"	/* DWARF_E_* values are here.  */
+#include "libdwfl_stacktraceP.h" /* want the INTDECLS */
+#include "libelfP.h"
 #include "system.h"
 
 static inline Dwfl_Error
@@ -56,6 +57,7 @@ open_elf_file (Elf **elf, int *fd, char **name)
       if (*fd < 0)
 	return CBFAIL;
 
+      /* This will call __libdwfl_reset_sh_addr.  */
       return __libdw_open_file (fd, elf, true, false);
     }
   else if (unlikely (elf_kind (*elf) != ELF_K_ELF))
@@ -79,6 +81,13 @@ open_elf (Dwfl_Module *mod, struct dwfl_file *file)
   Dwfl_Error error = open_elf_file (&file->elf, &file->fd, &file->name);
   if (error != DWFL_E_NOERROR)
     return error;
+
+  /* Cache file->elf in Dwflst_Process_Tracker if available: */
+  if (mod->dwfl->tracker != NULL && file->name != NULL)
+    {
+      INTUSE(dwflst_tracker_cache_elf) (mod->dwfl->tracker, file->name,
+					file->name, file->elf, file->fd);
+    }
 
   GElf_Ehdr ehdr_mem, *ehdr = gelf_getehdr (file->elf, &ehdr_mem);
   if (ehdr == NULL)
@@ -685,6 +694,19 @@ find_offsets (Elf *elf, GElf_Addr main_bias, size_t phnum, size_t n,
     }
 }
 
+/* This is a string section/segment, so we want to make sure the last
+   valid index contains a zero character to terminate a string.  */
+static void
+validate_strdata (Elf_Data *symstrdata)
+{
+  size_t size = symstrdata->d_size;
+  const char *buf = symstrdata->d_buf;
+  while (size > 0 && *(buf + size - 1) != '\0')
+    --size;
+  symstrdata->d_size = size;
+}
+
+
 /* Various addresses we might want to pull from the dynamic segment.  */
 enum
 {
@@ -809,6 +831,8 @@ translate_offs (GElf_Addr adjust,
 						  ELF_T_BYTE);
 	  if (mod->symstrdata == NULL)
 	    mod->symdata = NULL;
+	  else
+	    validate_strdata (mod->symstrdata);
 	}
       if (mod->symdata == NULL)
 	mod->symerr = DWFL_E (LIBELF, elf_errno ());
@@ -981,6 +1005,7 @@ find_aux_sym (Dwfl_Module *mod __attribute__ ((unused)),
 	free (buffer);
       else
 	{
+	  /* We don't call __libdwfl_reset_sh_addr here, should we?  */
 	  mod->aux_sym.elf = elf_memory (buffer, size);
 	  if (mod->aux_sym.elf == NULL)
 	    free (buffer);
@@ -1174,6 +1199,8 @@ find_symtab (Dwfl_Module *mod)
   mod->symstrdata = elf_getdata (symstrscn, NULL);
   if (mod->symstrdata == NULL || mod->symstrdata->d_buf == NULL)
     goto elferr;
+  else
+    validate_strdata (mod->symstrdata);
 
   if (xndxscn == NULL)
     mod->symxndxdata = NULL;
@@ -1257,6 +1284,8 @@ find_symtab (Dwfl_Module *mod)
       mod->aux_symstrdata = elf_getdata (aux_strscn, NULL);
       if (mod->aux_symstrdata == NULL || mod->aux_symstrdata->d_buf == NULL)
 	goto aux_cleanup;
+      else
+	validate_strdata (mod->aux_symstrdata);
 
       if (aux_xndxscn == NULL)
 	mod->aux_symxndxdata = NULL;
@@ -1363,11 +1392,14 @@ load_dw (Dwfl_Module *mod, struct dwfl_file *debugfile)
     }
 
   /* We might have already closed the fd when we asked dwarf_begin_elf to
-     create an Dwarf.  Help out a little in case we need to find an alt or
-     dwo file later.  */
-  if (mod->dw->debugdir == NULL && mod->elfdir != NULL
+     create an Dwarf.  Help out a little in case we need to find an alt,
+     dwo, or dwp file later.  */
+  if (mod->dw->elfpath == NULL && mod->elfpath != NULL
       && debugfile == &mod->main)
-    mod->dw->debugdir = strdup (mod->elfdir);
+    {
+      mod->dw->elfpath = strdup (mod->elfpath);
+      __libdw_set_debugdir (mod->dw);
+    }
 
   /* Until we have iterated through all CU's, we might do lazy lookups.  */
   mod->lazycu = 1;
@@ -1393,6 +1425,7 @@ find_dw (Dwfl_Module *mod)
   switch (mod->dwerr)
     {
     case DWFL_E_NOERROR:
+      /* main.elf already should have had __libdwfl_reset_sh_addr called.  */
       mod->debug.elf = mod->main.elf;
       mod->debug.address_sync = mod->main.address_sync;
 

@@ -47,27 +47,40 @@ __libdw_findabbrev (struct Dwarf_CU *cu, unsigned int code)
   /* See whether the entry is already in the hash table.  */
   abb = Dwarf_Abbrev_Hash_find (&cu->abbrev_hash, code);
   if (abb == NULL)
-    while (cu->last_abbrev_offset != (size_t) -1l)
-      {
-	size_t length;
+    {
+      mutex_lock (cu->abbrev_lock);
 
-	/* Find the next entry.  It gets automatically added to the
-	   hash table.  */
-	abb = __libdw_getabbrev (cu->dbg, cu, cu->last_abbrev_offset, &length,
-				 NULL);
-	if (abb == NULL || abb == DWARF_END_ABBREV)
+      /* Check once more in case entry was added before abbrev_lock
+	 was acquired.  */
+      abb = Dwarf_Abbrev_Hash_find (&cu->abbrev_hash, code);
+
+      if (abb == NULL)
+	while (cu->last_abbrev_offset != (size_t) -1l)
 	  {
-	    /* Make sure we do not try to search for it again.  */
-	    cu->last_abbrev_offset = (size_t) -1l;
-	    return DWARF_END_ABBREV;
+	    size_t length;
+
+	    /* Find the next entry.  It gets automatically added to the
+	       hash table.  */
+	    abb = __libdw_getabbrev (cu->dbg, cu, cu->last_abbrev_offset,
+				     &length);
+
+	    if (abb == NULL || abb == DWARF_END_ABBREV)
+	      {
+		/* Make sure we do not try to search for it again.  */
+		cu->last_abbrev_offset = (size_t) -1l;
+		mutex_unlock (cu->abbrev_lock);
+		return DWARF_END_ABBREV;
+	      }
+
+	    cu->last_abbrev_offset += length;
+
+	    /* Is this the code we are looking for?  */
+	    if (abb->code == code)
+	      break;
 	  }
 
-	cu->last_abbrev_offset += length;
-
-	/* Is this the code we are looking for?  */
-	if (abb->code == code)
-	  break;
-      }
+      mutex_unlock (cu->abbrev_lock);
+    }
 
   /* This is our second (or third, etc.) call to __libdw_findabbrev
      and the code is invalid.  */

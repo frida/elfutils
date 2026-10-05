@@ -1,5 +1,6 @@
 /* Sniff out modules from ELF headers visible in memory segments.
    Copyright (C) 2008-2012, 2014, 2015, 2018 Red Hat, Inc.
+   Copyright (C) 2021 Mark J. Wielaard <mark@klomp.org>
    This file is part of elfutils.
 
    This file is free software; you can redistribute it and/or modify
@@ -27,17 +28,20 @@
    not, see <http://www.gnu.org/licenses/>.  */
 
 #include <config.h>
-#include "../libelf/libelfP.h"	/* For NOTE_ALIGN4 and NOTE_ALIGN8.  */
-#undef	_
+#include "libelfP.h"	/* For NOTE_ALIGN4 and NOTE_ALIGN8.  */
 #include "libdwflP.h"
 #include "common.h"
 
 #include <elf.h>
 #include <gelf.h>
 #include <inttypes.h>
-#include <endian.h>
-#include <unistd.h>
 #include <fcntl.h>
+
+#ifdef HAVE_OPENAT2_RESOLVE_IN_ROOT
+#include <linux/openat2.h>
+#include <sys/syscall.h>
+#include <unistd.h>
+#endif
 
 #include <system.h>
 
@@ -48,7 +52,7 @@
 
 #define INITIAL_READ	1024
 
-#if __BYTE_ORDER == __LITTLE_ENDIAN
+#if BYTE_ORDER == LITTLE_ENDIAN
 # define MY_ELFDATA	ELFDATA2LSB
 #else
 # define MY_ELFDATA	ELFDATA2MSB
@@ -290,10 +294,12 @@ read_portion (struct read_state *read_state,
 
 int
 dwfl_segment_report_module (Dwfl *dwfl, int ndx, const char *name,
+			    const char *executable,
 			    Dwfl_Memory_Callback *memory_callback,
 			    void *memory_callback_arg,
 			    Dwfl_Module_Callback *read_eagerly,
 			    void *read_eagerly_arg,
+			    size_t maxread,
 			    const void *note_file, size_t note_file_size,
 			    const struct r_debug_info *r_debug_info)
 {
@@ -331,6 +337,12 @@ dwfl_segment_report_module (Dwfl *dwfl, int ndx, const char *name,
      here so we can always safely free it.  */
   void *phdrsp = NULL;
 
+  /* Collect the build ID bits here.  */
+  struct elf_build_id build_id;
+  build_id.memory = NULL;
+  build_id.len = 0;
+  build_id.vaddr = 0;
+
   if (! (*memory_callback) (dwfl, ndx, &buffer, &buffer_available,
 			    start, sizeof (Elf64_Ehdr), memory_callback_arg)
       || memcmp (buffer, ELFMAG, SELFMAG) != 0)
@@ -366,6 +378,20 @@ dwfl_segment_report_module (Dwfl *dwfl, int ndx, const char *name,
   e_ident = ((const unsigned char *) buffer);
   ei_class = e_ident[EI_CLASS];
   ei_data = e_ident[EI_DATA];
+  /* buffer may be unaligned, in which case xlatetom would not work.
+     xlatetom does work when the in and out d_buf are equal (but not
+     for any other overlap).  */
+  size_t ehdr_align = (ei_class == ELFCLASS32
+		       ? __alignof__ (Elf32_Ehdr)
+		       : __alignof__ (Elf64_Ehdr));
+  if (((uintptr_t) buffer & (ehdr_align - 1)) != 0)
+    {
+      memcpy (&ehdr, buffer,
+	      (ei_class == ELFCLASS32
+	       ? sizeof (Elf32_Ehdr)
+	       : sizeof (Elf64_Ehdr)));
+      xlatefrom.d_buf = &ehdr;
+    }
   switch (ei_class)
     {
     case ELFCLASS32:
@@ -421,12 +447,6 @@ dwfl_segment_report_module (Dwfl *dwfl, int ndx, const char *name,
 		    start + phoff, xlatefrom.d_size))
     goto out;
 
-  /* ph_buffer_size will be zero if we got everything from the initial
-     buffer, otherwise it will be the size of the new buffer that
-     could be read.  */
-  if (ph_buffer_size != 0)
-    xlatefrom.d_size = ph_buffer_size;
-
   xlatefrom.d_buf = ph_buffer;
 
   bool class32 = ei_class == ELFCLASS32;
@@ -440,6 +460,18 @@ dwfl_segment_report_module (Dwfl *dwfl, int ndx, const char *name,
 
   xlateto.d_buf = phdrsp;
   xlateto.d_size = phdrsp_bytes;
+
+  /* ph_ buffer may be unaligned, in which case xlatetom would not work.
+     xlatetom does work when the in and out d_buf are equal (but not
+     for any other overlap).  */
+  size_t phdr_align = (class32
+		       ? __alignof__ (Elf32_Phdr)
+		       : __alignof__ (Elf64_Phdr));
+  if (((uintptr_t) ph_buffer & (phdr_align - 1)) != 0)
+    {
+      memcpy (phdrsp, ph_buffer, phdrsp_bytes);
+      xlatefrom.d_buf = phdrsp;
+    }
 
   /* Track the bounds of the file visible in memory.  */
   GElf_Off file_trimmed_end = 0; /* Proper p_vaddr + p_filesz end.  */
@@ -459,12 +491,6 @@ dwfl_segment_report_module (Dwfl *dwfl, int ndx, const char *name,
   /* If we see PT_DYNAMIC, record it here.  */
   GElf_Addr dyn_vaddr = 0;
   GElf_Xword dyn_filesz = 0;
-
-  /* Collect the build ID bits here.  */
-  struct elf_build_id build_id;
-  build_id.memory = NULL;
-  build_id.len = 0;
-  build_id.vaddr =0;
 
   Elf32_Phdr *p32 = phdrsp;
   Elf64_Phdr *p64 = phdrsp;
@@ -502,27 +528,29 @@ dwfl_segment_report_module (Dwfl *dwfl, int ndx, const char *name,
               /* We calculate from the p_offset of the note segment,
                because we don't yet know the bias for its p_vaddr.  */
               const GElf_Addr note_vaddr = start + offset;
-              void *data;
-              size_t data_size;
+              void *data = NULL;
+              size_t data_size = 0;
               if (read_portion (&read_state, &data, &data_size,
 				start, segment, note_vaddr, filesz))
                 continue; /* Next header */
 
-              /* data_size will be zero if we got everything from the initial
-                 buffer, otherwise it will be the size of the new buffer that
-                 could be read.  */
-              if (data_size != 0)
-                filesz = data_size;
+	      if (filesz > SIZE_MAX / sizeof (Elf32_Nhdr))
+		continue;
 
-              assert (sizeof (Elf32_Nhdr) == sizeof (Elf64_Nhdr));
+              eu_static_assert (sizeof (Elf32_Nhdr) == sizeof (Elf64_Nhdr));
 
               void *notes;
-              if (ei_data == MY_ELFDATA)
+              if (ei_data == MY_ELFDATA
+		  && (uintptr_t) data == (align == 8
+					  ? NOTE_ALIGN8 ((uintptr_t) data)
+					  : NOTE_ALIGN4 ((uintptr_t) data)))
                 notes = data;
               else
                 {
                   const unsigned int xencoding = ehdr.e32.e_ident[EI_DATA];
 
+		  if (filesz > SIZE_MAX / sizeof (Elf32_Nhdr))
+		    continue;
                   notes = malloc (filesz);
                   if (unlikely (notes == NULL))
                     continue; /* Next header */
@@ -533,6 +561,18 @@ dwfl_segment_report_module (Dwfl *dwfl, int ndx, const char *name,
                   xlatefrom.d_size = filesz;
                   xlateto.d_buf = notes;
                   xlateto.d_size = filesz;
+
+		  /* data may be unaligned, in which case xlatetom would not work.
+		     xlatetom does work when the in and out d_buf are equal (but not
+		     for any other overlap).  */
+		  if ((uintptr_t) data != (align == 8
+					   ? NOTE_ALIGN8 ((uintptr_t) data)
+					   : NOTE_ALIGN4 ((uintptr_t) data)))
+		    {
+		      memcpy (notes, data, filesz);
+		      xlatefrom.d_buf = notes;
+		    }
+
                   if (elf32_xlatetom (&xlateto, &xlatefrom, xencoding) == NULL)
                     {
                       free (notes);
@@ -543,44 +583,48 @@ dwfl_segment_report_module (Dwfl *dwfl, int ndx, const char *name,
 
               const GElf_Nhdr *nh = notes;
               size_t len = 0;
-              size_t last_len;
-              while (filesz > len + sizeof (*nh))
+              while (filesz - len > sizeof (*nh))
                 {
-                  const void *note_name;
-                  const void *note_desc;
-                  last_len = len;
+		  len += sizeof (*nh);
 
-                  len += sizeof (*nh);
-                  note_name = notes + len;
+		  size_t namesz = nh->n_namesz;
+		  namesz = align == 8 ? NOTE_ALIGN8 (namesz) : NOTE_ALIGN4 (namesz);
+		  if (namesz > filesz - len || len + namesz < namesz)
+		    break;
 
-                  len += nh->n_namesz;
-                  len = align == 8 ? NOTE_ALIGN8 (len) : NOTE_ALIGN4 (len);
-                  note_desc = notes + len;
+		  void *note_name = notes + len;
+		  len += namesz;
 
-                  if (unlikely (filesz < len + nh->n_descsz
-                                || len < last_len
-                                || len + nh->n_descsz < last_len))
-                    break;
+		  size_t descsz = nh->n_descsz;
+		  descsz = align == 8 ? NOTE_ALIGN8 (descsz) : NOTE_ALIGN4 (descsz);
+		  if (descsz > filesz - len || len + descsz < descsz)
+		    break;
 
-                  if (nh->n_type == NT_GNU_BUILD_ID
-                      && nh->n_descsz > 0
-                      && nh->n_namesz == sizeof "GNU"
-                      && !memcmp (note_name, "GNU", sizeof "GNU"))
-                    {
-                      build_id.vaddr = (note_desc
+		  void *note_desc = notes + len;
+		  len += descsz;
+
+		  /* We don't handle very short or really large build-ids.  We need at
+		     at least 3 and allow for up to 64 (normally ids are 20 long).  */
+#define MIN_BUILD_ID_BYTES 3
+#define MAX_BUILD_ID_BYTES 64
+		  if (nh->n_type == NT_GNU_BUILD_ID
+		      && nh->n_descsz >= MIN_BUILD_ID_BYTES
+		      && nh->n_descsz <= MAX_BUILD_ID_BYTES
+		      && nh->n_namesz == sizeof "GNU"
+		      && !memcmp (note_name, "GNU", sizeof "GNU"))
+		    {
+		      build_id.vaddr = (note_desc
 					- (const void *) notes
 					+ note_vaddr);
-                      build_id.len = nh->n_descsz;
-                      build_id.memory = malloc (build_id.len);
-                      if (likely (build_id.memory != NULL))
-                        memcpy (build_id.memory, note_desc, build_id.len);
-                      break;
-                    }
+		      build_id.len = nh->n_descsz;
+		      build_id.memory = malloc (build_id.len);
+		      if (likely (build_id.memory != NULL))
+			memcpy (build_id.memory, note_desc, build_id.len);
+		      break;
+		    }
 
-                  len += nh->n_descsz;
-                  len = align == 8 ? NOTE_ALIGN8 (len) : NOTE_ALIGN4 (len);
-                  nh = (void *) notes + len;
-                }
+		  nh = (void *) notes + len;
+		}
 
               if (notes != data)
                 free (notes);
@@ -645,10 +689,7 @@ dwfl_segment_report_module (Dwfl *dwfl, int ndx, const char *name,
   /* We must have seen the segment covering offset 0, or else the ELF
      header we read at START was not produced by these program headers.  */
   if (unlikely (!found_bias))
-    {
-      free (build_id.memory);
-      goto out;
-    }
+    goto out;
 
   /* Now we know enough to report a module for sure: its bounds.  */
   module_start += bias;
@@ -684,7 +725,7 @@ dwfl_segment_report_module (Dwfl *dwfl, int ndx, const char *name,
 	      bias += fixup;
 	      if (module->name[0] != '\0')
 		{
-		  name = basename (module->name);
+		  name = xbasename (module->name);
 		  name_is_final = true;
 		}
 	      break;
@@ -703,23 +744,37 @@ dwfl_segment_report_module (Dwfl *dwfl, int ndx, const char *name,
 	        && invalid_elf (module->elf, module->disk_file_has_build_id,
 				&build_id))
 	      {
-		elf_end (module->elf);
-		close (module->fd);
-		module->elf = NULL;
-		module->fd = -1;
+		/* If MODULE's build-id doesn't match the disk file's
+		   build-id, close ELF only if MODULE and ELF refer to
+		   different builds of files with the same name.  This
+		   prevents premature closure of the correct ELF in cases
+		   where segments of a module are non-contiguous in memory.  */
+		if (name != NULL && module->name[0] != '\0'
+		    && strcmp (xbasename (module->name), xbasename (name)) == 0)
+		  {
+		    elf_end (module->elf);
+		    close (module->fd);
+		    module->elf = NULL;
+		    module->fd = -1;
+		  }
 	      }
-	    if (module->elf != NULL)
+	    else if (module->elf != NULL)
 	      {
-		/* Ignore this found module if it would conflict in address
-		   space with any already existing module of DWFL.  */
+		/* This module has already been reported.  */
 		skip_this_module = true;
+	      }
+	    else
+	      {
+		/* Only report this module if we haven't already done so.  */
+		for (Dwfl_Module *mod = dwfl->modulelist; mod != NULL;
+		     mod = mod->next)
+		  if (mod->low_addr == module_start
+		      && mod->high_addr == module_end)
+		    skip_this_module = true;
 	      }
 	  }
       if (skip_this_module)
-	{
-	  free (build_id.memory);
-	  goto out;
-	}
+	goto out;
     }
 
   const char *file_note_name = handle_file_note (module_start, module_end,
@@ -730,7 +785,46 @@ dwfl_segment_report_module (Dwfl *dwfl, int ndx, const char *name,
       name = file_note_name;
       name_is_final = true;
       bool invalid = false;
-      fd = open (name, O_RDONLY);
+
+      /* We were not handed specific executable hence try to look for it in
+	 sysroot if it is set.  */
+      if (dwfl->sysroot && !executable)
+	{
+#ifdef HAVE_OPENAT2_RESOLVE_IN_ROOT
+	  int sysrootfd, err;
+
+	  struct open_how how = {
+	    .flags = O_RDONLY,
+	    .resolve = RESOLVE_IN_ROOT,
+	  };
+
+	  sysrootfd = open (dwfl->sysroot, O_DIRECTORY|O_PATH);
+	  if (sysrootfd < 0)
+	    return -1;
+
+	  fd = syscall (SYS_openat2, sysrootfd, name, &how, sizeof(how));
+	  err = fd < 0 ? -errno : 0;
+
+	  close (sysrootfd);
+
+	  /* Fallback to regular open() if openat2 is not available. */
+	  if (fd < 0 && err == -ENOSYS)
+#endif
+	    {
+	      int r;
+	      char *n;
+
+	      r = asprintf (&n, "%s%s", dwfl->sysroot, name);
+	      if (r > 0)
+		{
+		  fd = open (n, O_RDONLY);
+		  free (n);
+		}
+	    }
+	}
+      else
+	  fd = open (name, O_RDONLY);
+
       if (fd >= 0)
 	{
 	  Dwfl_Error error = __libdw_open_file (&fd, &elf, true, false);
@@ -750,10 +844,6 @@ dwfl_segment_report_module (Dwfl *dwfl, int ndx, const char *name,
 	}
     }
 
-  /* Our return value now says to skip the segments contained
-     within the module.  */
-  ndx = addr_segndx (dwfl, segment, module_end, true);
-
   /* Examine its .dynamic section to get more interesting details.
      If it has DT_SONAME, we'll use that as the module name.
      If it has a DT_DEBUG, then it's actually a PIE rather than a DSO.
@@ -772,12 +862,9 @@ dwfl_segment_report_module (Dwfl *dwfl, int ndx, const char *name,
       && ! read_portion (&read_state, &dyn_data, &dyn_data_size,
 			 start, segment, dyn_vaddr, dyn_filesz))
     {
-      /* dyn_data_size will be zero if we got everything from the initial
-         buffer, otherwise it will be the size of the new buffer that
-         could be read.  */
-      if (dyn_data_size != 0)
-	dyn_filesz = dyn_data_size;
-
+      if ((dyn_filesz / dyn_entsize) == 0
+	  || dyn_filesz > (SIZE_MAX / dyn_entsize))
+	goto out;
       void *dyns = malloc (dyn_filesz);
       Elf32_Dyn *d32 = dyns;
       Elf64_Dyn *d64 = dyns;
@@ -790,7 +877,19 @@ dwfl_segment_report_module (Dwfl *dwfl, int ndx, const char *name,
       xlateto.d_buf = dyns;
       xlateto.d_size = dyn_filesz;
 
+      /* dyn_data may be unaligned, in which case xlatetom would not work.
+	 xlatetom does work when the in and out d_buf are equal (but not
+	 for any other overlap).  */
       bool is32 = (ei_class == ELFCLASS32);
+      size_t dyn_align = (is32
+			  ? __alignof__ (Elf32_Dyn)
+			  : __alignof__ (Elf64_Dyn));
+      if (((uintptr_t) dyn_data & (dyn_align - 1)) != 0)
+	{
+	  memcpy (dyns, dyn_data, dyn_filesz);
+	  xlatefrom.d_buf = dyns;
+	}
+
       if ((is32 && elf32_xlatetom (&xlateto, &xlatefrom, ei_data) != NULL)
           || (!is32 && elf64_xlatetom (&xlateto, &xlatefrom, ei_data) != NULL))
         {
@@ -881,6 +980,7 @@ dwfl_segment_report_module (Dwfl *dwfl, int ndx, const char *name,
   /* At this point we do not need BUILD_ID or NAME any more.
      They have been copied.  */
   free (build_id.memory);
+  build_id.memory = NULL;
   finish_portion (&read_state, &soname, &soname_size);
 
   if (unlikely (mod == NULL))
@@ -888,6 +988,8 @@ dwfl_segment_report_module (Dwfl *dwfl, int ndx, const char *name,
       ndx = -1;
       goto out;
     }
+  else
+    ndx++;
 
   /* We have reported the module.  Now let the caller decide whether we
      should read the whole thing in right now.  */
@@ -908,8 +1010,8 @@ dwfl_segment_report_module (Dwfl *dwfl, int ndx, const char *name,
       /* The caller wants to read the whole file in right now, but hasn't
 	 done it for us.  Fill in a local image of the virtual file.  */
 
-      if (file_trimmed_end > SIZE_MAX)
-	goto out;
+      if (file_trimmed_end > maxread)
+	file_trimmed_end = maxread;
 
       void *contents = calloc (1, file_trimmed_end);
       if (unlikely (contents == NULL))
@@ -970,6 +1072,8 @@ dwfl_segment_report_module (Dwfl *dwfl, int ndx, const char *name,
 	elf->flags |= ELF_F_MALLOCED;
     }
 
+  /* Elf comes through a core file, so cannot be an ET_REL. Don't call
+     __libdwfl_reset_sh_addr.  */
   if (elf != NULL && mod->main.elf == NULL)
     {
       /* Install the file in the module.  */
@@ -983,6 +1087,8 @@ dwfl_segment_report_module (Dwfl *dwfl, int ndx, const char *name,
     }
 
 out:
+  if (build_id.memory != NULL)
+    free (build_id.memory);
   free (phdrsp);
   if (buffer != NULL)
     (*memory_callback) (dwfl, -1, &buffer, &buffer_available, 0, 0,

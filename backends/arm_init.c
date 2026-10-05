@@ -1,5 +1,5 @@
 /* Initialization of Arm specific backend library.
-   Copyright (C) 2002, 2005, 2009, 2013, 2014, 2015, 2017 Red Hat, Inc.
+   Copyright (C) 2002, 2005, 2009, 2013, 2014, 2015, 2017, 2026 Red Hat, Inc.
    This file is part of elfutils.
    Written by Ulrich Drepper <drepper@redhat.com>, 2002.
 
@@ -34,6 +34,7 @@
 #define BACKEND		arm_
 #define RELOC_PREFIX	R_ARM_
 #include "libebl_CPU.h"
+#include "libebl_PERF_FLAGS.h"
 
 /* This defines the common reloc hooks based on arm_reloc.def.  */
 #include "common-reloc.c"
@@ -59,10 +60,16 @@ arm_init (Elf *elf __attribute__ ((unused)),
   HOOK (eh, check_reloc_target_type);
   HOOK (eh, symbol_type_name);
   HOOK (eh, data_marker_symbol);
+  HOOK (eh, machine_flag_name);
 
   /* We only unwind the core integer registers.  */
   eh->frame_nregs = 16;
   HOOK (eh, set_initial_registers_tid);
+  /* set_initial_registers_sample is default ver  */
+  HOOK (eh, sample_sp_pc);
+  /* sample_perf_regs_mapping is default ver  */
+  eh->perf_frame_regs_mask = PERF_FRAME_REGISTERS_ARM;
+  __libebl_init_cached_regs_mapping (eh);
 
   /* Bit zero encodes whether an function address is THUMB or ARM. */
   eh->func_addr_mask = ~(GElf_Addr)1;

@@ -1,5 +1,5 @@
 /* Get previous frame state for an existing frame state.
-   Copyright (C) 2013, 2014, 2016 Red Hat, Inc.
+   Copyright (C) 2013, 2014, 2016, 2024 Red Hat, Inc.
    This file is part of elfutils.
 
    This file is free software; you can redistribute it and/or modify
@@ -33,7 +33,7 @@
 #include "cfi.h"
 #include <stdlib.h>
 #include "libdwflP.h"
-#include "../libdw/dwarf.h"
+#include "dwarf.h"
 #include <system.h>
 
 /* Maximum number of DWARF expression stack slots before returning an error.  */
@@ -43,21 +43,21 @@
    error.  */
 #define DWARF_EXPR_STEPS_MAX 0x1000
 
-bool
+int
 internal_function
 __libdwfl_frame_reg_get (Dwfl_Frame *state, unsigned regno, Dwarf_Addr *val)
 {
   Ebl *ebl = state->thread->process->ebl;
   if (! ebl_dwarf_to_regno (ebl, &regno))
-    return false;
+    return -1;
   if (regno >= ebl_frame_nregs (ebl))
-    return false;
+    return -1;
   if ((state->regs_set[regno / sizeof (*state->regs_set) / 8]
        & ((uint64_t) 1U << (regno % (sizeof (*state->regs_set) * 8)))) == 0)
-    return false;
+    return 1;
   if (val)
     *val = state->regs[regno];
-  return true;
+  return 0;
 }
 
 bool
@@ -75,17 +75,6 @@ __libdwfl_frame_reg_set (Dwfl_Frame *state, unsigned regno, Dwarf_Addr val)
   state->regs_set[regno / sizeof (*state->regs_set) / 8] |=
 		((uint64_t) 1U << (regno % (sizeof (*state->regs_set) * 8)));
   state->regs[regno] = val;
-  return true;
-}
-
-static bool
-state_get_reg (Dwfl_Frame *state, unsigned regno, Dwarf_Addr *val)
-{
-  if (! __libdwfl_frame_reg_get (state, regno, val))
-    {
-      __libdwfl_seterrno (DWFL_E_INVALID_REGISTER);
-      return false;
-    }
   return true;
 }
 
@@ -211,7 +200,7 @@ expr_eval (Dwfl_Frame *state, Dwarf_Frame *frame, const Dwarf_Op *ops,
 	    }
 	  break;
 	case DW_OP_reg0 ... DW_OP_reg31:
-	  if (! state_get_reg (state, op->atom - DW_OP_reg0, &val1)
+	  if (INTUSE (dwfl_frame_reg) (state, op->atom - DW_OP_reg0, &val1) != 0
 	      || ! push (val1))
 	    {
 	      free (stack.addrs);
@@ -219,14 +208,14 @@ expr_eval (Dwfl_Frame *state, Dwarf_Frame *frame, const Dwarf_Op *ops,
 	    }
 	  break;
 	case DW_OP_regx:
-	  if (! state_get_reg (state, op->number, &val1) || ! push (val1))
+	  if (INTUSE (dwfl_frame_reg) (state, op->number, &val1) != 0 || ! push (val1))
 	    {
 	      free (stack.addrs);
 	      return false;
 	    }
 	  break;
 	case DW_OP_breg0 ... DW_OP_breg31:
-	  if (! state_get_reg (state, op->atom - DW_OP_breg0, &val1))
+	  if (INTUSE (dwfl_frame_reg) (state, op->atom - DW_OP_breg0, &val1) != 0)
 	    {
 	      free (stack.addrs);
 	      return false;
@@ -239,7 +228,7 @@ expr_eval (Dwfl_Frame *state, Dwarf_Frame *frame, const Dwarf_Op *ops,
 	    }
 	  break;
 	case DW_OP_bregx:
-	  if (! state_get_reg (state, op->number, &val1))
+	  if (INTUSE (dwfl_frame_reg) (state, op->number, &val1) != 0)
 	    {
 	      free (stack.addrs);
 	      return false;
@@ -526,6 +515,7 @@ new_unwound (Dwfl_Frame *state)
   unwound->signal_frame = false;
   unwound->initial_frame = false;
   unwound->pc_state = DWFL_FRAME_STATE_ERROR;
+  unwound->unwound_source = DWFL_UNWOUND_NONE;
   memset (unwound->regs_set, 0, sizeof (unwound->regs_set));
   return unwound;
 }
@@ -591,7 +581,7 @@ handle_cfi (Dwfl_Frame *state, Dwarf_Addr pc, Dwarf_CFI *cfi, Dwarf_Addr bias)
 	  else if (reg_ops == NULL)
 	    {
 	      /* REGNO is same-value.  */
-	      if (! state_get_reg (state, regno, &regval))
+	      if (INTUSE (dwfl_frame_reg) (state, regno, &regval) != 0)
 		continue;
 	    }
 	  else
@@ -610,7 +600,19 @@ handle_cfi (Dwfl_Frame *state, Dwarf_Addr pc, Dwarf_CFI *cfi, Dwarf_Addr bias)
 
       /* Some architectures encode some extra info in the return address.  */
       if (regno == frame->fde->cie->return_address_register)
-	regval &= ebl_func_addr_mask (ebl);
+	{
+	  regval &= ebl_func_addr_mask (ebl);
+
+	  /* In aarch64, pseudo-register RA_SIGN_STATE indicates whether the
+	     return address needs demangling using the PAC mask from the
+	     thread. */
+	  if (cfi->e_machine == EM_AARCH64 &&
+	      frame->nregs > DW_AARCH64_RA_SIGN_STATE &&
+	      frame->regs[DW_AARCH64_RA_SIGN_STATE].value & 0x1)
+	    {
+	      regval &= ~(state->thread->aarch64.pauth_insn_mask);
+	    }
+	}
 
       /* This is another strange PPC[64] case.  There are two
 	 registers numbers that can represent the same DWARF return
@@ -638,9 +640,10 @@ handle_cfi (Dwfl_Frame *state, Dwarf_Addr pc, Dwarf_CFI *cfi, Dwarf_Addr bias)
     }
   if (unwound->pc_state == DWFL_FRAME_STATE_ERROR)
     {
-      if (__libdwfl_frame_reg_get (unwound,
-				   frame->fde->cie->return_address_register,
-				   &unwound->pc))
+      int res = INTUSE (dwfl_frame_reg) (unwound,
+          frame->fde->cie->return_address_register,
+          &unwound->pc);
+      if (res == 0)
 	{
 	  /* PPC32 __libc_start_main properly CFI-unwinds PC as zero.
 	     Currently none of the archs supported for unwinding have
@@ -698,7 +701,7 @@ getfunc (int firstreg, unsigned nregs, Dwarf_Word *regs, void *arg)
   Dwfl_Frame *state = arg;
   assert (firstreg >= 0);
   while (nregs--)
-    if (! __libdwfl_frame_reg_get (state, firstreg++, regs++))
+    if (INTUSE (dwfl_frame_reg) (state, firstreg++, regs++) != 0)
       return false;
   return true;
 }
@@ -740,14 +743,20 @@ __libdwfl_frame_unwind (Dwfl_Frame *state)
 	{
 	  handle_cfi (state, pc - bias, cfi_eh, bias);
 	  if (state->unwound)
-	    return;
+	    {
+	      state->unwound->unwound_source = DWFL_UNWOUND_EH_CFI;
+	      return;
+	    }
 	}
       Dwarf_CFI *cfi_dwarf = INTUSE(dwfl_module_dwarf_cfi) (mod, &bias);
       if (cfi_dwarf)
 	{
 	  handle_cfi (state, pc - bias, cfi_dwarf, bias);
 	  if (state->unwound)
-	    return;
+	    {
+	      state->unwound->unwound_source = DWFL_UNWOUND_DWARF_CFI;
+	      return;
+	    }
 	}
     }
   assert (state->unwound == NULL);
@@ -772,6 +781,7 @@ __libdwfl_frame_unwind (Dwfl_Frame *state)
       // __libdwfl_seterrno has been called above.
       return;
     }
+  state->unwound->unwound_source = DWFL_UNWOUND_EBL;
   assert (state->unwound->pc_state == DWFL_FRAME_STATE_PC_SET);
   state->unwound->signal_frame = signal_frame;
 }

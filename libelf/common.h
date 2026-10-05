@@ -30,14 +30,8 @@
 #ifndef _COMMON_H
 #define _COMMON_H       1
 
-#ifdef HAVE_CONFIG_H
-#include <config.h>
-#endif
-
-#include <ar.h>
 #include <stdlib.h>
 #include <string.h>
-#include <system.h>
 
 #include "libelfP.h"
 
@@ -95,30 +89,34 @@ allocate_elf (int fildes, void *map_address, int64_t offset, size_t maxsize,
 }
 
 
-/* Acquire lock for the descriptor and all children.  */
+/* Caller must hold a lock for ELF. If there are children then a lock
+   will be acquired for each of them (recursively).  */
 static void
 __attribute__ ((unused))
-libelf_acquire_all (Elf *elf)
+libelf_acquire_all_children (Elf *elf)
 {
-  rwlock_wrlock (elf->lock);
-
   if (elf->kind == ELF_K_AR)
     {
       Elf *child = elf->state.ar.children;
 
       while (child != NULL)
 	{
+	  rwlock_wrlock (child->lock);
+
 	  if (child->ref_count != 0)
-	    libelf_acquire_all (child);
+	    libelf_acquire_all_children (child);
+
 	  child = child->next;
 	}
     }
 }
 
-/* Release own lock and those of the children.  */
+
+/* Caller must hold a lock for ELF. If there are children then a lock
+   will be released for each of them (recursively).  */
 static void
 __attribute__ ((unused))
-libelf_release_all (Elf *elf)
+libelf_release_all_children (Elf *elf)
 {
   if (elf->kind == ELF_K_AR)
     {
@@ -127,12 +125,12 @@ libelf_release_all (Elf *elf)
       while (child != NULL)
 	{
 	  if (child->ref_count != 0)
-	    libelf_release_all (child);
+	    libelf_release_all_children (child);
+
+	  rwlock_unlock (child->lock);
 	  child = child->next;
 	}
     }
-
-  rwlock_unlock (elf->lock);
 }
 
 
@@ -157,7 +155,7 @@ libelf_release_all (Elf *elf)
 		 : bswap_64 (Var))))
 
 
-#if __BYTE_ORDER == __LITTLE_ENDIAN
+#if BYTE_ORDER == LITTLE_ENDIAN
 # define MY_ELFDATA	ELFDATA2LSB
 #else
 # define MY_ELFDATA	ELFDATA2MSB

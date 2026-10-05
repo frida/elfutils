@@ -47,7 +47,7 @@ sparc_check_object_attribute (Ebl *ebl __attribute__ ((unused)),
       "asi_blk_init", "fmaf", "vis3", "hpc", "random", "trans",
       "fjfmau", "ima", "asi_cache_sparing", "aes", "des", "kasumi",
       "camellia", "md5", "sha1", "sha256", "sha512", "mpmul", "mont",
-      "pause", "cbcond", "crc32c", "resv30", "resv31"
+      "pause", "cbcond", "crc32c", "resv29", "resv30", "resv31",
     };
 
   

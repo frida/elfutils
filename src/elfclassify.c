@@ -1,5 +1,6 @@
 /* Classification of ELF files.
    Copyright (C) 2019 Red Hat, Inc.
+   Copyright (C) 2025 Mark J. Wielaard <mark@klomp.org>
    This file is part of elfutils.
 
    This file is free software; you can redistribute it and/or modify
@@ -42,8 +43,8 @@ ARGP_PROGRAM_BUG_ADDRESS_DEF = PACKAGE_BUGREPORT;
 /* Set by parse_opt.  */
 static int verbose;
 
-/* Set by the main function.  */
-static const char *current_path;
+/* Set by the main function and check_ar_members.  */
+static char *current_path;
 
 /* Set by open_file.  */
 static int file_fd = -1;
@@ -76,6 +77,7 @@ elf_issue (const char *msg)
 
 /* Set by parse_opt.  */
 static bool flag_only_regular_files;
+static bool flag_any_ar_member;
 
 static bool
 open_file (void)
@@ -470,6 +472,16 @@ is_unstripped (void)
     && (has_symtab || has_debug_sections);
 }
 
+/* Return true if the file is an ELF file which has .debug_* sections
+   (note that a symtab is not considered a debug section).  */
+static bool
+is_has_debug_sections (void)
+{
+  return elf_kind (elf) != ELF_K_NONE
+    && (elf_type == ET_REL || elf_type == ET_EXEC || elf_type == ET_DYN)
+    && has_debug_sections;
+}
+
 /* Return true if the file contains only debuginfo, but no loadable
    program bits.  Then it is most likely a separate .debug file, a dwz
    multi-file or a .dwo file.  Note that it can still be loadable,
@@ -623,6 +635,7 @@ enum classify_check
   classify_elf_archive,
   classify_core,
   classify_unstripped,
+  classify_has_debug_sections,
   classify_executable,
   classify_program,
   classify_shared,
@@ -647,6 +660,7 @@ enum
   classify_flag_no_print,
   classify_flag_matching,
   classify_flag_not_matching,
+  classify_flag_any_ar_member
 };
 
 static bool
@@ -696,6 +710,10 @@ parse_opt (int key, char *arg __attribute__ ((unused)),
 	flag_only_regular_files = true;
 	break;
 
+      case classify_flag_any_ar_member:
+	flag_any_ar_member = true;
+	break;
+
       case classify_flag_stdin:
         flag_stdin = do_stdin;
         break;
@@ -735,79 +753,178 @@ parse_opt (int key, char *arg __attribute__ ((unused)),
   return 0;
 }
 
+static bool
+check_checks (void)
+{
+  bool checks_passed = true;
+  bool checks[] =
+    {
+      [classify_elf] = is_elf (),
+      [classify_elf_file] = is_elf_file (),
+      [classify_elf_archive] = is_elf_archive (),
+      [classify_core] = is_core (),
+      [classify_unstripped] = is_unstripped (),
+      [classify_has_debug_sections] = is_has_debug_sections (),
+      [classify_executable] = is_executable (),
+      [classify_program] = is_program (),
+      [classify_shared] = is_shared (),
+      [classify_library] = is_library (),
+      [classify_linux_kernel_module] = is_linux_kernel_module (),
+      [classify_debug_only] = is_debug_only (),
+      [classify_loadable] = is_loadable (),
+    };
+
+  if (verbose > 1)
+    {
+      if (checks[classify_elf])
+	fprintf (stderr, "debug: %s: elf\n", current_path);
+      if (checks[classify_elf_file])
+	fprintf (stderr, "debug: %s: elf_file\n", current_path);
+      if (checks[classify_elf_archive])
+	fprintf (stderr, "debug: %s: elf_archive\n", current_path);
+      if (checks[classify_core])
+	fprintf (stderr, "debug: %s: core\n", current_path);
+      if (checks[classify_unstripped])
+	fprintf (stderr, "debug: %s: unstripped\n", current_path);
+      if (checks[classify_has_debug_sections])
+	fprintf (stderr, "debug: %s: has_debug_sections\n", current_path);
+      if (checks[classify_executable])
+	fprintf (stderr, "debug: %s: executable\n", current_path);
+      if (checks[classify_program])
+	fprintf (stderr, "debug: %s: program\n", current_path);
+      if (checks[classify_shared])
+	fprintf (stderr, "debug: %s: shared\n", current_path);
+      if (checks[classify_library])
+	fprintf (stderr, "debug: %s: library\n", current_path);
+      if (checks[classify_linux_kernel_module])
+	fprintf (stderr, "debug: %s: linux kernel module\n", current_path);
+      if (checks[classify_debug_only])
+	fprintf (stderr, "debug: %s: debug-only\n", current_path);
+      if (checks[classify_loadable])
+	fprintf (stderr, "debug: %s: loadable\n", current_path);
+    }
+
+  for (enum classify_check check = 0;
+       check <= classify_check_last; ++check)
+    switch (requirements[check])
+      {
+      case required:
+	if (!checks[check])
+	  checks_passed = false;
+	break;
+      case forbidden:
+	if (checks[check])
+	  checks_passed = false;
+	break;
+      case do_not_care:
+	break;
+      }
+
+  return checks_passed;
+}
+
+static bool
+check_ar_members (void)
+{
+  char *ar_path = current_path;
+  Elf *ar_elf = elf;
+  bool checks_passed = false;
+
+  /* Guess some storage space for the "ar_path[member_path]" string so
+     we have to hopefully only allocate once.  */
+  size_t path_size = 2 * strlen (ar_path) + 24;
+  char *full_path = malloc (path_size);
+  if (full_path == NULL)
+    {
+      issue (ENOMEM, N_("allocating a member string name storage"));
+      current_path = ar_path;
+      return false;
+    }
+
+  int cmd = ELF_C_READ;
+  bool bad_ar = false;
+  while ((elf = elf_begin (file_fd, cmd, ar_elf)) != NULL)
+    {
+      Elf_Arhdr *arhdr = elf_getarhdr (elf);
+      if (arhdr == NULL)
+	{
+	  elf_issue (N_("getting ar header"));
+	  elf_end (elf);
+	  bad_ar = true;
+	  break;
+	}
+
+      char *ar_name = arhdr->ar_name ?: "<unknown>";
+      if (path_size < strlen (ar_path) + strlen (ar_name) + 3)
+	{
+	  path_size = strlen (ar_path) + strlen (ar_name) + 24;
+	  char *new_path = realloc (full_path, path_size);
+	  if (new_path == NULL)
+	    {
+	      issue (ENOMEM, N_("allocating a member string name storage"));
+	      elf_end (elf);
+	      bad_ar = true;
+	      break;
+	    }
+
+	  full_path = new_path;
+	}
+
+      if (sprintf (full_path, "%s[%s]", ar_path, ar_name) < 0)
+	{
+	  issue (0, N_("constructing ar member string name"));
+	  elf_end (elf);
+	  bad_ar = true;
+	  break;
+	}
+
+      /* One member (and no errors) is all it takes to pass.  But we
+	 check all members to make sure it is a valid archive.  */
+      current_path = full_path;
+      if (run_classify () && check_checks ())
+	checks_passed = true;
+
+      cmd = elf_next (elf);
+
+      if (elf_end (elf) != 0)
+	{
+	  elf_issue (N_("closing ar member"));
+	  bad_ar = true;
+	}
+
+      if (bad_ar)
+	break;
+    }
+
+  if (bad_ar)
+    checks_passed = false;
+
+  elf = ar_elf;
+  free (full_path);
+  current_path = ar_path;
+  return checks_passed;
+}
+
 /* Perform requested checks against the file at current_path.  If
    necessary, sets *STATUS to 1 if checks failed.  */
 static void
 process_current_path (int *status)
 {
   bool checks_passed = true;
+  bool elf_opened = open_elf ();
 
-  if (open_elf () && run_classify ())
-    {
-      bool checks[] =
-        {
-	 [classify_elf] = is_elf (),
-	 [classify_elf_file] = is_elf_file (),
-	 [classify_elf_archive] = is_elf_archive (),
-	 [classify_core] = is_core (),
-	 [classify_unstripped] = is_unstripped (),
-	 [classify_executable] = is_executable (),
-	 [classify_program] = is_program (),
-	 [classify_shared] = is_shared (),
-	 [classify_library] = is_library (),
-	 [classify_linux_kernel_module] = is_linux_kernel_module (),
-	 [classify_debug_only] = is_debug_only (),
-	 [classify_loadable] = is_loadable (),
-	};
-
-      if (verbose > 1)
-        {
-	  if (checks[classify_elf])
-	    fprintf (stderr, "debug: %s: elf\n", current_path);
-	  if (checks[classify_elf_file])
-	    fprintf (stderr, "debug: %s: elf_file\n", current_path);
-	  if (checks[classify_elf_archive])
-	    fprintf (stderr, "debug: %s: elf_archive\n", current_path);
-	  if (checks[classify_core])
-	    fprintf (stderr, "debug: %s: core\n", current_path);
-          if (checks[classify_unstripped])
-            fprintf (stderr, "debug: %s: unstripped\n", current_path);
-          if (checks[classify_executable])
-            fprintf (stderr, "debug: %s: executable\n", current_path);
-          if (checks[classify_program])
-            fprintf (stderr, "debug: %s: program\n", current_path);
-          if (checks[classify_shared])
-            fprintf (stderr, "debug: %s: shared\n", current_path);
-          if (checks[classify_library])
-            fprintf (stderr, "debug: %s: library\n", current_path);
-	  if (checks[classify_linux_kernel_module])
-	    fprintf (stderr, "debug: %s: linux kernel module\n", current_path);
-	  if (checks[classify_debug_only])
-	    fprintf (stderr, "debug: %s: debug-only\n", current_path);
-          if (checks[classify_loadable])
-            fprintf (stderr, "debug: %s: loadable\n", current_path);
-        }
-
-      for (enum classify_check check = 0;
-           check <= classify_check_last; ++check)
-        switch (requirements[check])
-          {
-          case required:
-            if (!checks[check])
-              checks_passed = false;
-            break;
-          case forbidden:
-            if (checks[check])
-              checks_passed = false;
-            break;
-          case do_not_care:
-            break;
-          }
-    }
+  if (elf_opened && flag_any_ar_member && run_classify () && is_elf_archive ())
+    checks_passed = check_ar_members ();
+  else if (elf_opened && !flag_any_ar_member && run_classify ())
+    checks_passed = check_checks ();
   else if (file_fd == -1)
     checks_passed = false; /* There is nothing to check, bad file.  */
   else
     {
+      /* Not a bad file, but couldn't open it as an ELF file or trying
+	 to run some classify tests on it produced an error.  Check if
+	 there were any required tests (normally there is at least the
+	 default --elf, but the user could have used --not-elf).  */
       for (enum classify_check check = 0;
            check <= classify_check_last; ++check)
         if (requirements[check] == required)
@@ -889,6 +1006,8 @@ main (int argc, char **argv)
       { "unstripped", classify_check_offset + classify_unstripped, NULL, 0,
         N_("File is an ELF file with symbol table or .debug_* sections \
 and can be stripped further"), 1 },
+      { "has-debug-sections", classify_check_offset + classify_has_debug_sections, NULL, 0,
+        N_("File is an ELF file with .debug_* sections"), 1 },
       { "executable", classify_check_offset + classify_executable, NULL, 0,
         N_("File is (primarily) an ELF program executable \
 (not primarily a DSO)"), 1 },
@@ -921,6 +1040,8 @@ and can be stripped further"), 1 },
         NULL, OPTION_HIDDEN, NULL, 1 },
       { "not-unstripped", classify_check_not_offset + classify_unstripped,
         NULL, OPTION_HIDDEN, NULL, 1 },
+      { "not-has-debug-sections", classify_check_not_offset + classify_has_debug_sections,
+        NULL, OPTION_HIDDEN, NULL, 1 },
       { "not-executable", classify_check_not_offset + classify_executable,
         NULL, OPTION_HIDDEN, NULL, 1 },
       { "not-program", classify_check_not_offset + classify_program,
@@ -940,13 +1061,15 @@ and can be stripped further"), 1 },
       { NULL, 0, NULL, OPTION_DOC, N_("Input flags"), 2 },
       { "file", 'f', NULL, 0,
         N_("Only classify regular (not symlink nor special device) files"), 2 },
+      { "any-ar-member", classify_flag_any_ar_member, NULL, 0,
+        N_("Input is an ar file, classification options apply to ar member"), 2 },
       { "stdin", classify_flag_stdin, NULL, 0,
         N_("Also read file names to process from standard input, \
 separated by newlines"), 2 },
       { "stdin0", classify_flag_stdin0, NULL, 0,
         N_("Also read file names to process from standard input, \
 separated by ASCII NUL bytes"), 2 },
-      { "no-stdin", classify_flag_stdin, NULL, 0,
+      { "no-stdin", classify_flag_no_stdin, NULL, 0,
         N_("Do not read files from standard input (default)"), 2 },
       { "compressed", 'z', NULL, 0,
 	N_("Try to open compressed files or embedded (kernel) ELF images"),
@@ -981,7 +1104,9 @@ separated by ASCII NUL bytes"), 2 },
 Determine the type of an ELF file.\
 \n\n\
 All of the classification options must apply at the same time to a \
-particular file.  Classification options can be negated using a \
+particular file.  Or if --any-ar-member is given the file must be an \
+ELF archive and the classification options must apply to at least one \
+archive member.  Classification options can be negated using a \
 \"--not-\" prefix.\
 \n\n\
 Since modern ELF does not clearly distinguish between programs and \
@@ -998,6 +1123,13 @@ or library) use --loadable.  Note that files that only contain \
 (separate) debug information (--debug-only) are never --loadable (even \
 though they might contain program headers).  Linux kernel modules are \
 also not --loadable (in the normal sense).\
+\n\n\
+Detecting whether an ELF file can be stripped, because it has .[z]debug_* \
+sections and/or a symbol table (.symtab) is done with --unstripped. \
+To detect whether an ELF file just has .[z]debug_* sections use \
+--has-debug-section. Use --debug-only to detect ELF files that contain \
+only debuginfo (possibly just a .symtab), but no loadable program bits \
+(like separate .debug files, dwz multi-files or .dwo files).\
 \n\n\
 Without any of the --print options, the program exits with status 0 \
 if the requested checks pass for all input files, with 1 if a check \

@@ -30,7 +30,7 @@
 #define _LIBDWELFP_H	1
 
 #include <libdwelf.h>
-#include "../libdw/libdwP.h"	/* We need its INTDECLs.  */
+#include "libdwP.h"	/* We need its INTDECLs.  */
 #include <assert.h>
 #include <string.h>
 
@@ -38,5 +38,7 @@
 INTDECL (dwelf_elf_gnu_debuglink)
 INTDECL (dwelf_dwarf_gnu_debugaltlink)
 INTDECL (dwelf_elf_gnu_build_id)
+INTDECL (dwelf_dwarf_debug_sup)
+INTDECL (dwelf_dwarf_debug_dwp)
 
 #endif	/* libdwelfP.h */

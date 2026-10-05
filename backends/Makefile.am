@@ -1,6 +1,6 @@
 ## Process this file with automake to create Makefile.in
 ##
-## Copyright (C) 2000-2010, 2013, 2014 Red Hat, Inc.
+## Copyright (C) 2000-2010, 2013, 2014, 2025-2026 Red Hat, Inc.
 ## Copyright (C) 2012 Tilera Corporation
 ## This file is part of elfutils.
 ##
@@ -37,17 +37,17 @@ AM_CPPFLAGS += -I$(top_srcdir)/libebl -I$(top_srcdir)/libasm \
 noinst_LIBRARIES = libebl_backends.a libebl_backends_pic.a
 
 modules = i386 sh x86_64 ia64 alpha arm aarch64 sparc ppc ppc64 s390 \
-	  m68k bpf riscv csky
+	  m68k bpf riscv csky loongarch arc mips hexagon
 
 i386_SRCS = i386_init.c i386_symbol.c i386_corenote.c i386_cfi.c \
 	    i386_retval.c i386_regs.c i386_auxv.c \
-	    i386_initreg.c i386_unwind.c
+	    i386_initreg.c i386_initreg_sample.c i386_unwind.c
 
 sh_SRCS = sh_init.c sh_symbol.c sh_corenote.c sh_regs.c sh_retval.c
 
 x86_64_SRCS = x86_64_init.c x86_64_symbol.c x86_64_corenote.c x86_64_cfi.c \
 	      x86_64_retval.c x86_64_regs.c x86_64_initreg.c \
-	      x86_64_unwind.c x32_corenote.c
+	      x86_64_initreg_sample.c x86_64_unwind.c x32_corenote.c
 
 
 ia64_SRCS = ia64_init.c ia64_symbol.c ia64_regs.c ia64_retval.c
@@ -56,11 +56,12 @@ alpha_SRCS = alpha_init.c alpha_symbol.c alpha_retval.c alpha_regs.c \
 	     alpha_corenote.c alpha_auxv.c
 
 arm_SRCS = arm_init.c arm_symbol.c arm_regs.c arm_corenote.c \
-	   arm_auxv.c arm_attrs.c arm_retval.c arm_cfi.c arm_initreg.c
+	   arm_auxv.c arm_attrs.c arm_retval.c arm_cfi.c arm_initreg.c \
+	   arm_initreg_sample.c arm_machineflagname.c
 
 aarch64_SRCS = aarch64_init.c aarch64_regs.c aarch64_symbol.c	\
 	       aarch64_corenote.c aarch64_retval.c aarch64_cfi.c \
-	       aarch64_initreg.c aarch64_unwind.c
+	       aarch64_initreg.c aarch64_initreg_sample.c aarch64_unwind.c
 
 sparc_SRCS = sparc_init.c sparc_symbol.c sparc_regs.c sparc_retval.c \
 	     sparc_corenote.c sparc64_corenote.c sparc_auxv.c sparc_attrs.c \
@@ -95,16 +96,39 @@ riscv_SRCS = riscv_init.c riscv_symbol.c riscv_cfi.c riscv_regs.c \
 csky_SRCS = csky_attrs.c csky_init.c csky_symbol.c csky_cfi.c \
 	    csky_regs.c csky_initreg.c csky_corenote.c
 
+loongarch_SRCS = loongarch_init.c loongarch_symbol.c loongarch_cfi.c \
+	    loongarch_regs.c loongarch_retval.c loongarch_initreg.c \
+	    loongarch_unwind.c loongarch_corenote.c
+
+arc_SRCS = arc_init.c arc_symbol.c
+
+mips_SRCS = mips_init.c mips_symbol.c mips_initreg.c \
+	    mips_cfi.c mips_unwind.c mips_regs.c mips_retval.c \
+	    mips_corenote.c
+
+hexagon_SRCS = hexagon_init.c hexagon_symbol.c
+
 libebl_backends_a_SOURCES = $(i386_SRCS) $(sh_SRCS) $(x86_64_SRCS) \
 			    $(ia64_SRCS) $(alpha_SRCS) $(arm_SRCS) \
 			    $(aarch64_SRCS) $(sparc_SRCS) $(ppc_SRCS) \
 			    $(ppc64_SRCS) $(s390_SRCS) \
-			    $(m68k_SRCS) $(bpf_SRCS) $(riscv_SRCS) $(csky_SRCS)
+			    $(m68k_SRCS) $(bpf_SRCS) $(riscv_SRCS) $(csky_SRCS) \
+			    $(loongarch_SRCS) $(arc_SRCS) $(mips_SRCS) \
+			    $(hexagon_SRCS)
 
 libebl_backends_pic_a_SOURCES =
-am_libebl_backends_pic_a_OBJECTS = $(libebl_backends_a_SOURCES:.c=.os)
+am_libebl_backends_pic_a_OBJECTS = $(libebl_backends_a_SOURCES:.c=_.os)
 
-noinst_HEADERS = libebl_CPU.h common-reloc.c linux-core-note.c x86_corenote.c
+noinst_HEADERS = libebl_CPU.h libebl_PERF_FLAGS.h common-reloc.c \
+	    linux-core-note.c x86_corenote.c \
+	    x86_initreg_sample.c
+
 EXTRA_DIST = $(modules:=_reloc.def)
 
-MOSTLYCLEANFILES = $(am_libebl_backends_pic_a_OBJECTS)
+EXTRA_libebl_backends_a_DEPENDENCIES = libebl_backends.manifest
+
+libebl_backends.manifest: $(libebl_backends_a_OBJECTS)
+	$(AM_V_GEN)echo $^ > $@
+
+MOSTLYCLEANFILES = $(am_libebl_backends_a_OBJECTS) $(am_libebl_backends_pic_a_OBJECTS)
+CLEANFILES = $(EXTRA_libebl_backends_a_DEPENDENCIES)

@@ -1,9 +1,270 @@
-Version 0.187 after 0.186
+Version 0.196 "Split Personality"
+
+debuginfod: The $DEBUGINFOD_TIMEOUT environment variable is now enforced
+            when establishing a connection to a server.
+
+libdw: New functions dwarf_begin_type, dwarf_begin_elf_type and
+       dwarf_get_type plus new enum Dwarf_Type.  Used to select between
+       plain DWARF, split DWARF (.dwo/.dwp) and GNU LTO when opening a
+       file.
+
+       Added support for DWARF5 supplementary files (.debug_sup) and
+       associated DW_FORM_ref_sup4/8 and DW_FORM_strp_sup forms.
+
+       Added support for split DWARF debug data when contained in the
+       same file as the skeleton.
+
+libdwelf: New functions dwelf_dwarf_debug_sup and dwelf_dwarf_debug_dwp
+          for querying .debug_sup and .debug_dwp section data.
+
+libdwfl: Now correctly handles Linux kernel module sections that are
+         not present in sysfs.
+
+libdwfl_stacktrace: New functions dwflst_arch_from_uname,
+                    dwflst_arch_expected_frame_nregs,
+                    dwflst_arch_sp_dwarf_reg and dwflst_arch_sp_perf_reg
+                    providing per-architecture constants.  The
+                    libdwfl_stacktrace interface is experimental and may
+                    be subject to API/ABI changes.
+
+stackprof: New profiling tool for collecting systemwide stacktrace
+           profiles.  Replaces the eu-stacktrace tool.  Requires
+           a C++20 capable compiler.
+
+stacktrace: This experimental tool has been removed and replaced with
+            eu-stackprof.
+
+srcfiles: Now handles CU names and files from split DWARF.
+
+strip: Fixed bug where a section's sh_link or sh_info reference could
+       be missing from the debug file.
+
+version.h: New macro _ELFUTILS_THREAD_SAFE added to <elfutils/version.h>.
+           Defined to 1 when the elfutils libraries are built with thread
+           safety support enabled.  Otherwise it is left undefined.
+           Thread safety support is experimental and is not yet officially
+           supported.
+
+Version 0.195 "Handwritten"
+
+CONTRIBUTING: elfutils has adopted a policy on the use of Large Language
+              Models (LLMs).  Contributions containing output generated
+              by LLMs are not currently being accepted.
+
+debuginfod: Introduce --home-redirect and --home-html switches allowing
+            for redirecting to custom URL and/or serving a custom html
+            file, if document root is requested.  Related: PR33635.
+
+            New command line option --max-depth that limits scanner depth.
+
+            Metadata queries now support lookup by build-id.
+
+            New function debuginfod_default_progressfn added to
+            libdebuginfod.
+
+debuginfod-find: Fixed bug where DEBUGINFOD_PROGRESS environment variable
+                 was ignored if debuginfod-find was invoked without -v.
+
+elflint: Recognize .debug_*.dwo sections, .relro_padding sections as well
+         as SHT_AARCH64_ATTRIBUTES, SHT_LLVM_LTO and SHT_LLVM_ADDRSIG.
+
+         Accept R_X86_64_DTPOFF64 in ET_REL files.
+
+         Add lints for PT_LOAD, PT_INTERP and PT_PHDR segments.
+
+libdw: Added language constants for Erlang, Elixir and Gleam.
+
+       Fixed bug that caused sections in DWARF package files (.dwp) to be
+       missed if section .debug_dwp is present.
+
+libdwfl: Improved handling of Linux kernel object files with sh_addr
+         fields set to non-zero.
+
+libdwfl_stacktrace: AArch64 and 32-bit ARM support added.  The
+                    libdwfl_stacktrace library interface is experimental
+                    and may be subject to API/ABI changes.
+
+libelf: New man pages for gelf.h functions.
+
+        Fixed gelf_getmove and gelf_update_move assertion failures caused
+        by incorrect ELFCLASS32/ELFCLASS64 handling.
+
+        elf_update now correctly handles binaries with 65280+ sections
+        when section zero headers aren't loaded.
+
+readelf: Improved support for DWARF Package Files (.dwp) sections.
+
+         Improved output format for .gcc_except_table.
+
+stacktrace: This experimental tool is scheduled to be removed in the next
+            release and replaced with the upcoming eu-stackprof tool.
+
+Version 0.194 "Manual Labour"
+
+debuginfod-find: Fixed caching bug preventing user-cancelled downloads
+                 from being re-downloaded at a later time.
+
+elfclassify: New options --has-debug-sections and --any-ar-member.
+
+elflint: Presence of vendor- and application-specific ELF note types no
+         longer triggers compliance errors.
+
+libdwfl_stacktrace: New function dwflst_sample_getframes.  The
+                    libdwfl_stacktrace library interface is experimental
+                    and may be subject to API/ABI changes.
+
+libelf: Manual pages have been added for many libelf library functions.
+        Additional manual pages are planned for future releases.
+
+readelf: Up to 13% faster when using the -N option.
+
+Version 0.193 "Bugs erased, stacks traced"
+
+debuginfod: Add CORS (webapp access) support to webapi and --cors option.
+
+	    Add --listen-address option for binding the HTTP listen socket
+	    to a specific IPv4 or IPv6 address.
+
+	    debuginfod client now caches x-debuginfod-* HTTP headers
+	    alongside downloaded files.
+
+libdw: Add dwarf_language and dwarf_language_lower_bound functions.
+
+       Improved support for DWARF6 language metadata as well as DWARF
+       language constants for Nim, Dylan, Algol68, V and Mojo.
+
+       dwarf_srclang is now forward-compatible with DWARF6 language
+       constants.
+
+libdwfl_stacktrace: Experimental new library interface for unwinding
+		    stack samples into call chains, and tracking and
+		    caching Elf data for multiple processes, building
+		    on libdwfl.  Initially supports perf_events stack
+		    sample data.
+
+libelf: elf_scnshndx has been rewritten to be more robust, particularily
+        for ELF files with more than 64K sections.
+
+readelf: Improved handling of corrupt ELF data.
+
+	 --section-headers output now includes a "Key to Flags" explaining
+	 section flag meanings.
+
+Version 0.192 "New rules, faster tools"
+
+CONDUCT: A new code of conduct has been adopted.  See the
+	 CONDUCT file for more information.
+
+debuginfod: Add per-file signature verification for integrity
+            checking, using RPM IMA scheme from Fedora/RHEL.
+
+	    New API for metadata queries: file name -> buildid.
+
+	    Server-side extraction of files from kernel debuginfo
+	    packages is significantly faster. Now takes < 0.25 seconds,
+	    down from ~50 seconds.
+
+libdw:	    New functions dwfl_set_sysroot, dwfl_frame_unwound_source
+	    and dwfl_unwound_source_str.
+
+stacktrace: Experimental new tool that can process a stream of stack
+            samples from the Sysprof profiler and unwind them into call
+            chains. Enable on x86 with --enable-stacktrace. See
+            README.eu-stacktrace in the development branch for detailed
+            usage instructions:
+            https://sourceware.org/cgit/elfutils/tree/README.eu-stacktrace?h=users/serhei/eu-stacktrace
+
+Version 0.191 "Bug fixes in C major"
+
+libdw: dwarf_addrdie now supports binaries lacking a .debug_aranges
+       section.
+
+       Improved support for DWARF package files.  Add new function
+       dwarf_cu_dwp_section_info.
+
+debuginfod: Caching eviction logic improvements to improve retention
+            of small/frequent/slow files such as Fedora's vdso.debug.
+
+srcfiles: Can now fetch the source files of a DWARF/ELF file and
+          place them into a zip.
+
+Version 0.190 "Woke!"
+
+CONTRIBUTING: Switch from real name policy to known identity policy.
+              Updated ChangeLog policy (no more separate ChangeLog files).
+              There is a SECURITY bug policy now.
+              The default branch is now 'main'.
+
+libelf: Add RELR support.
+
+libdw: Recognize .debug_[ct]u_index sections
+
+readelf: Support readelf -Ds, --use-dynamic --symbol.
+         Support .gdb_index version 9
+
+scrlines: New tool that compiles a list of source files associated
+          with a specified dwarf/elf file.
+
+debuginfod: Schema change (reindexing required, sorry!) for a 60%
+            compression in filename representation, which was a large
+            part of the sqlite index; also, more deliberate sqlite
+            -wal management during scanning using the
+            --scan-checkpoint option.
+
+backends: Various LoongArch updates.
+
+Version 0.189 "Don't deflate!"
+
+configure: eu-nm, eu-addr2line and eu-stack can provide demangled symbols
+           when linked with libstdc++. Use --disable-demangler to disable.
+
+           A new option --enable-sanitize-memory has been added for msan
+           sanitizer support.
+
+libelf: elf_compress now supports ELFCOMPRESS_ZSTD when build against
+        libzstd
+
+libdwfl: dwfl_module_return_value_location now returns 0 (no return type)
+         for DIEs that point to a DW_TAG_unspecified_type.
+
+elfcompress: -t, --type= now support zstd if libelf has been build with
+             ELFCOMPRESS_ZSTD support.
+
+backends: Add support for LoongArch and Synopsys ARCv2 processors.
+
+Version 0.188 "no section left behind"
+
+readelf: Add -D, --use-dynamic option.
+
+debuginfod-client: Add $DEBUGINFOD_HEADERS_FILE setting to supply outgoing
+                   HTTP headers. Add new function debuginfod_find_section.
+
+debuginfod: Add --disable-source-scan option.
+
+libdwfl: Add new function dwfl_get_debuginfod_client.
+         Add new function dwfl_frame_reg.
+         Add new function dwfl_report_offline_memory.
+
+Version 0.187 "no zero negatives"
 
 debuginfod: Support -C option for connection thread pooling.
 
+debuginfod-client: Negative cache file are now zero sized instead of
+                   no-permission files.
 
-Version 0.186
+addr2line: The -A, --absolute option, which shows file names including
+           the full compilation directory is now the default.  To get the
+           old behavior use the new option --relative.
+
+readelf, elflint: Recognize FDO Packaging Metadata ELF notes
+
+libdw, debuginfo-client: Load libcurl lazily only when files need to
+                         be fetched remotely. libcurl is now never
+                         loaded when DEBUGINFOD_URLS is unset. And when
+                         DEBUGINFOD_URLS is set, libcurl is only loaded
+                         when the debuginfod_begin function is called.
+
+Version 0.186 "Just In Time"
 
 debuginfod-client: Default $DEBUGINFOD_URLS is computed from drop-in files
                    /etc/debuginfod/*.urls rather than hardcoded into the
@@ -29,7 +290,7 @@ libdw: Support for the NVIDIA Cuda line map extensions.
 
 translations: Update Japanese translation.
 
-Version 0.185
+Version 0.185 "oops, I did it again"
 
 debuginfod-client: Simplify curl handle reuse so downloads which
                    return an error are retried.
@@ -37,7 +298,7 @@ debuginfod-client: Simplify curl handle reuse so downloads which
 elfcompress: Always exit with code 0 when the operation succeeds (even
              when nothing was done). On error the exit code is now always 1.
 
-Version 0.184
+Version 0.184 "negative results"
 
 debuginfod: Use libarchive's bsdtar as the .deb-family file unpacker.
 
@@ -56,7 +317,7 @@ libdw: handle DW_FORM_indirect when reading attributes
 
 translations: Update Polish translation.
 
-Version 0.183
+Version 0.183 "100+ commits"
 
 debuginfod: New thread-busy metric and more detailed error metrics.
             New --fdcache-mintmp and tracking of filesystem freespace.
@@ -73,7 +334,7 @@ config: profile.sh and profile.csh won't export DEBUGINFOD_URLS unless
 elflint, readelf: Recognize SHF_GNU_RETAIN.
                   Handle SHT_X86_64_UNWIND as valid relocation target.
 
-Version 0.182
+Version 0.182 "October Surprise!"
 
 backends: Support for tilegx has been removed.
 
@@ -87,7 +348,7 @@ debuginfod-client: Now supports compressed (kernel) ELF images.
 
 libdwfl: Add ZSTD compression support.
 
-Version 0.181
+Version 0.181 "Show me your ARMs"
 
 libelf: elf_update now compensates (fixes up) a bad sh_addralign for
         SHF_COMPRESSED sections.
@@ -104,7 +365,7 @@ libdw, readelf: Recognize DW_CFA_AARCH64_negate_ra_state. Allows unwinding
                 on arm64 for code that is compiled for PAC (Pointer
                 Authentication Code) as long as it isn't enabled.
 
-Version 0.180
+Version 0.180 "We got an L, we got an T, can we have a O?"
 
 elflint: Allow SHF_EXCLUDE as generic section flag when --gnu is given.
 
@@ -118,7 +379,7 @@ size: Also obey radix printing for bsd format.
 
 nm: Explicitly print weak 'V' or 'T' and common 'C' symbols.
 
-Version 0.179
+Version 0.179 "All your packages are belong to us!"
 
 debuginfod-client: When DEBUGINFOD_PROGRESS is set and the program doesn't
                    install its own debuginfod_progressfn_t show download
@@ -153,7 +414,7 @@ readelf, elflint: Handle PT_GNU_PROPERTY.
 
 translations: Updated Ukrainian translation.
 
-Version 0.178
+Version 0.178 "All the build-id you can count!"
 
 debuginfod: New server, client tool and library to index and fetch
             ELF/DWARF files addressed by build-id through HTTP.
@@ -175,7 +436,7 @@ libdw: Abbrevs and DIEs can now be read concurrently by multiple
 libdwfl: Will try to use debuginfod when installed as fallback to
          retrieve ELF and DWARF debug data files by build-id.
 
-Version 0.177
+Version 0.177 "What is your category, class and taxonomy?"
 
 elfclassify: New tool to analyze ELF objects.
 
@@ -191,7 +452,7 @@ libdwelf: Add dwelf_elf_e_machine_string.
 
 backends: Add support for C-SKY.
 
-Version 0.176
+Version 0.176 "At your own RISC-V"
 
 build: Add new --enable-install-elfh option.
        Do NOT use this for system installs (it overrides glibc elf.h).
@@ -219,7 +480,7 @@ backends: RISCV handles ADD/SUB relocations. Handle SHT_X86_64_UNWIND.
 
 Fixes CVE-2018-18310, CVE-2018-18520 and CVE-2018-18521.
 
-Version 0.174
+Version 0.174 "extended shnum"
 
 libelf, libdw and all tools now handle extended shnum and shstrndx correctly.
 
@@ -235,7 +496,7 @@ backends: RISCV and M68K now have backend implementations to generate CFI based
 
 Fixes CVE-2018-16062, CVE-2018-16402 and CVE-2018-16403.
 
-Version 0.173
+Version 0.173 "crash free"
 
 More fixes for crashes and hangs found by afl-fuzz. In particular various
 functions now detect and break infinite loops caused by bad DIE tree cycles.
@@ -253,16 +514,16 @@ backends: Handle BPF simple relocations.
           The RISCV backends now handles ABI specific CFI and knows about
           RISCV register types and names.
 
-Version 0.172
+Version 0.172 "DWARF5 bugs split!"
 
-No functional changes compared to 0.171.
+No functional changes compared to 0.171 "DWARF5 split!".
 
 Various bug fixes in libdw and eu-readelf dealing with bad DWARF5 data.
 Thanks to running the afl fuzzer on eu-readelf and various testcases.
 
 eu-readelf -N is ~15% faster.
 
-Version 0.171
+Version 0.171 "DWARF5 split!"
 
 DWARF5 and split dwarf, including GNU DebugFission, are supported now.
 Data can be read from the new DWARF sections .debug_addr, .debug_line_str,
@@ -300,7 +561,7 @@ backends: Add a RISC-V backend.
 There were various improvements to build on Windows.
 The sha1 and md5 implementations have been removed, they weren't used.
 
-Version 0.170
+Version 0.170 "DWARF4 1/2"
 
 libdw: Added new DWARF5 attribute, tag, character encoding, language code,
        calling convention, defaulted member function and macro constants
@@ -320,7 +581,7 @@ backends: Add support for EM_PPC64 GNU_ATTRIBUTES.
 
 translations: Update Polish translation.
 
-Version 0.168
+Version 0.168 "kthxbye"
 
 http://elfutils.org/ is now hosted at http://sourceware.org/elfutils/
 
@@ -330,7 +591,7 @@ libdw: dwarf.h corrected the DW_LANG_PLI constant name (was DW_LANG_PL1).
 
 readelf: Add optional --symbols[=SECTION] argument to select section name.
 
-Version 0.167
+Version 0.167 "disassemble this!"
 
 libasm: Add eBPF disassembler for EM_BPF files.
 
@@ -342,12 +603,12 @@ dwelf: Add ELF/DWARF string table creation functions. dwelf_strtab_init,
        dwelf_strtab_add, dwelf_strtab_add_len, dwelf_strtab_finalize,
        dwelf_strent_off, dwelf_strent_str and dwelf_strtab_free.
 
-Version 0.166
+Version 0.166 "bugs be gone!"
 
 config: The default program prefix for the installed tools is now eu-.
         Use configure --program-prefix="" to not use a program prefix.
 
-Version 0.165
+Version 0.165 "big DWARF & tiny ELF"
 
 elfcompress: New utility to compress or decompress ELF sections.
 
@@ -364,7 +625,7 @@ backends: sparc support for core and live backtraces.
 
 translations: Updated Polish translation.
 
-Version 0.164
+Version 0.164 "strip, no unstrip!"
 
 strip, unstrip: Handle ELF files with merged strtab/shstrtab tables.
                 Handle missing SHF_INFO_LINK section flags.
@@ -385,11 +646,11 @@ translations: Updated Ukrainian translation.
 
 Provide default-yama-scope subpackage.
 
-Version 0.163
+Version 0.163 "size matters"
 
 Bug fixes only, no new features.
 
-Version 0.162
+Version 0.162 "hard hat"
 
 libdw: Install new header elfutils/known-dwarf.h.
        dwarf.h Add preliminary DWARF5 constants DW_TAG_atomic_type,

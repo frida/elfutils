@@ -329,4 +329,72 @@ DWARF section [28] '.debug_info' at offset 0x1088:
                 [ 0] fbreg -32
 EOF
 
+# See run-dwelf-dwarf-debug-sup.sh
+# Supplementary files are the DWARF5 standardized variant of multi (GNU alt).
+testfiles testfile-dwarf5-ref-sup testfile-dwarf5.sup
+
+testrun_compare ${abs_top_builddir}/src/readelf --debug-dump=info testfile-dwarf5-ref-sup <<\EOF
+
+DWARF section [28] '.debug_info' at offset 0x22f8:
+ [Offset]
+ Compilation unit at offset 0:
+ Version: 5, Abbreviation section offset: 0, Address size: 8, Offset size: 4
+ Unit type: compile (1)
+ [     c]  compile_unit         abbrev: 1
+           producer             (strp_sup) "GNU C23 16.1.1 20260515 (Red Hat 16.1.1-2) -mtune=generic -march=x86-64 -mtls-dialect=gnu2 -gdwarf-5"
+           language             (data1) C11 (29)
+           language_name        (data1) C (3)
+           language_version     (data4) 202311
+           name                 (line_strp) "test-ref-sup.c"
+           comp_dir             (line_strp) "/tmp"
+           low_pc               (addr) 0x0000000000400446 <func>
+           high_pc              (udata) 69 (0x000000000040048b)
+           stmt_list            (sec_offset) 0
+ [    2c]    imported_unit        abbrev: 2
+             import               (ref_sup4) [     c]
+ [    31]    subprogram           abbrev: 6
+             external             (flag_present) yes
+             name                 (strp_sup) "main"
+             decl_file            (data1) test-ref-sup.c (1)
+             decl_line            (data1) 13
+             decl_column          (data1) 5
+             prototyped           (flag_present) yes
+             type                 (ref_sup4) [    32]
+             low_pc               (addr) 0x000000000040045f <main>
+             high_pc              (udata) 44 (0x000000000040048b)
+             frame_base           (exprloc) 
+              [ 0] call_frame_cfa
+             call_all_tail_calls  (flag_present) yes
+             sibling              (ref_udata) [    57]
+ [    49]      variable             abbrev: 3
+               name                 (string) "x"
+               decl_file            (data1) test-ref-sup.c (1)
+               decl_line            (data1) 15
+               decl_column          (data1) 14
+               type                 (ref_sup4) [    11]
+               location             (exprloc) 
+                [ 0] fbreg -32
+ [    57]    subprogram           abbrev: 5
+             external             (flag_present) yes
+             name                 (strp_sup) "func"
+             decl_file            (data1) test-ref-sup.c (1)
+             decl_line            (data1) 8
+             decl_column          (data1) 5
+             prototyped           (flag_present) yes
+             type                 (ref_sup4) [    32]
+             low_pc               (addr) 0x0000000000400446 <func>
+             high_pc              (udata) 25 (0x000000000040045f <main>)
+             frame_base           (exprloc) 
+              [ 0] call_frame_cfa
+             call_all_calls       (flag_present) yes
+ [    6e]      formal_parameter     abbrev: 4
+               name                 (string) "f"
+               decl_file            (data1) test-ref-sup.c (1)
+               decl_line            (data1) 8
+               decl_column          (data1) 22
+               type                 (ref_sup4) [    39]
+               location             (exprloc) 
+                [ 0] fbreg -24
+EOF
+
 exit 0

@@ -1,5 +1,6 @@
 #! /bin/sh
 # Copyright (C) 2005-2015, 2017 Red Hat, Inc.
+# Copyright (C) 2026 Mark J. Wielaard <mark@klomp.org>
 # This file is part of elfutils.
 #
 # This file is free software; you can redistribute it and/or modify
@@ -23,8 +24,11 @@
 set -e
 
 # Each test runs in its own directory to make sure they can run in parallel.
-test_dir="test-$$"
+test_name=$(basename $0)
+random_number=$(od -An -N8 -tx8 /dev/urandom | xargs)
+test_dir="${TMPDIR-/var/tmp}/elfutils-test-$test_name.${random_number}"
 mkdir -p "$test_dir"
+orig_dir="${PWD}"
 cd "$test_dir"
 
 #LC_ALL=C
@@ -35,7 +39,7 @@ remove_files=
 # Tests that trap EXIT (0) themselves should call this explicitly.
 exit_cleanup()
 {
-  rm -f $remove_files; cd ..; rmdir $test_dir
+  rm -f $remove_files; cd $orig_dir; rmdir $test_dir
 }
 trap exit_cleanup 0
 
@@ -115,6 +119,13 @@ program_transform()
   echo "$*" | sed "${program_transform_name}"
 }
 
+is_obj_bitcode()
+{
+  bcfile="$1"
+  BC=$(od -An -tx2 -N2 "$bcfile" | sed -e 's/^[[:space:]]*//')
+  if [ "'$BC'" = "'4342'" ]; then return 0; else return 1; fi
+}
+
 self_test_files_exe=`echo ${abs_top_builddir}/src/addr2line \
 ${abs_top_builddir}/src/elfclassify \
 ${abs_top_builddir}/src/stack \
@@ -134,8 +145,12 @@ testrun_on_self()
   exit_status=0
 
   for file in $self_test_files; do
+    if is_obj_bitcode "$file"; then
+      echo "*** skipping bitcode file in $* $file"
+    else
       testrun $* $file \
 	  || { echo "*** failure in $* $file"; exit_status=1; }
+    fi
   done
 
   # Only exit if something failed
@@ -173,8 +188,12 @@ testrun_on_self_obj()
   exit_status=0
 
   for file in $self_test_files_obj; do
+    if is_obj_bitcode "$file"; then
+      echo "*** skipping bitcode file in $* $file"
+    else
       testrun $* $file \
 	  || { echo "*** failure in $* $file"; exit_status=1; }
+    fi
   done
 
   # Only exit if something failed
@@ -187,12 +206,16 @@ testrun_on_self_compressed()
   exit_status=0
 
   for file in $self_test_files; do
+    if is_obj_bitcode "$file"; then
+      echo "*** skipping bitcode file in $* $file"
+    else
       tempfiles ${file}z
       testrun ${abs_top_builddir}/src/elfcompress -f -q -o ${file}z ${file}
       testrun ${abs_top_builddir}/src/elfcompress -f -q --name='.s??tab' ${file}z
 
       testrun $* ${file}z \
 	  || { echo "*** failure in $* ${file}z"; exit_status=1; }
+    fi
   done
 
   # Only exit if something failed
@@ -205,8 +228,12 @@ testrun_on_self_quiet()
   exit_status=0
 
   for file in $self_test_files; do
+    if is_obj_bitcode "$file"; then
+      echo "*** skipping bitcode file in $* $file"
+    else
       testrun $* $file > /dev/null \
 	  || { echo "*** failure in $* $file"; exit_status=1; }
+    fi
   done
 
   # Only exit if something failed

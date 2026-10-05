@@ -27,8 +27,7 @@
    not, see <http://www.gnu.org/licenses/>.  */
 
 #include <config.h>
-#include "../libelf/libelfP.h"
-#undef _
+#include "libelfP.h"
 
 #include "libdwflP.h"
 
@@ -78,6 +77,7 @@ elf_from_remote_memory (GElf_Addr ehdr_vma,
       return NULL;
     }
 
+  /* Note minread is just enough for an Elf32_Ehdr.  */
   ssize_t nread = (*read_memory) (arg, buffer, ehdr_vma,
 				  sizeof (Elf32_Ehdr), initial_bufsize);
   if (nread <= 0)
@@ -131,6 +131,8 @@ elf_from_remote_memory (GElf_Addr ehdr_vma,
       if (elf32_xlatetom (&xlateto, &xlatefrom, buffer[EI_DATA]) == NULL)
 	{
 	libelf_error:
+	  free (buffer);
+	  free (phdrsp);
 	  __libdwfl_seterrno (DWFL_E_LIBELF);
 	  return NULL;
 	}
@@ -144,10 +146,17 @@ elf_from_remote_memory (GElf_Addr ehdr_vma,
 	 zero sh_size field. We ignore this here because getting shdrs
 	 is just a nice bonus (see below where we trim the last phdrs
 	 PT_LOAD segment).  */
-      shdrs_end = ehdr.e32.e_shoff + ehdr.e32.e_shnum * ehdr.e32.e_shentsize;
+      GElf_Xword shnum32 = ehdr.e32.e_shnum;
+      GElf_Xword shentsize32 = ehdr.e32.e_shentsize;
+      if (shentsize32 != sizeof (Elf32_Shdr) && shentsize32 != 0)
+	goto bad_elf;
+      shdrs_end = ehdr.e32.e_shoff + shnum32 * shentsize32;
       break;
 
     case ELFCLASS64:
+      /* Unlikely, but minread was for just an Elf32_Ehdr.  */
+      if (unlikely ((size_t) nread < sizeof (Elf64_Ehdr)))
+        goto bad_elf;
       xlatefrom.d_size = sizeof (Elf64_Ehdr);
       if (elf64_xlatetom (&xlateto, &xlatefrom, buffer[EI_DATA]) == NULL)
 	goto libelf_error;
@@ -157,7 +166,11 @@ elf_from_remote_memory (GElf_Addr ehdr_vma,
       if (phentsize != sizeof (Elf64_Phdr) || phnum == 0)
 	goto bad_elf;
       /* See the NOTE above for shdrs_end and ehdr.e32.e_shnum.  */
-      shdrs_end = ehdr.e64.e_shoff + ehdr.e64.e_shnum * ehdr.e64.e_shentsize;
+      GElf_Xword shnum64 = ehdr.e64.e_shnum;
+      GElf_Xword shentsize64 = ehdr.e64.e_shentsize;
+      if (shentsize64 != sizeof (Elf64_Shdr) && shentsize64 != 0)
+	goto bad_elf;
+      shdrs_end = ehdr.e64.e_shoff + shnum64 * shentsize64;
       break;
 
     default:
@@ -171,7 +184,8 @@ elf_from_remote_memory (GElf_Addr ehdr_vma,
   xlatefrom.d_type = xlateto.d_type = ELF_T_PHDR;
   xlatefrom.d_size = phnum * phentsize;
 
-  if ((size_t) nread >= phoff + phnum * phentsize)
+  if (phoff <= (size_t) nread
+      && (size_t) phnum * phentsize <= (size_t) nread - phoff)
     /* We already have all the phdrs from the initial read.  */
     xlatefrom.d_buf = buffer + phoff;
   else
@@ -254,6 +268,11 @@ elf_from_remote_memory (GElf_Addr ehdr_vma,
       GElf_Off segment_end = ((offset + filesz + pagesize - 1)
                               & -pagesize);
 
+      /* Check for overflow or too big segment size.  */
+      if (unlikely (segment_end < (offset & -pagesize)
+		    || segment_end > SSIZE_MAX))
+	goto bad_elf;
+
       if (segment_end > (GElf_Off) contents_size)
         contents_size = segment_end;
 
@@ -282,6 +301,11 @@ elf_from_remote_memory (GElf_Addr ehdr_vma,
   else
     contents_size = segments_end;
 
+  /* Make sure the image is big enough for the ELF header written out
+     below; otherwise the elfNN_xlatetof of the header overflows it.  */
+  if (contents_size < (class32 ? sizeof ehdr.e32 : sizeof ehdr.e64))
+    goto bad_elf;
+
   free (buffer);
 
   /* Now we know the size of the whole image we want read in.  */
@@ -305,6 +329,19 @@ elf_from_remote_memory (GElf_Addr ehdr_vma,
 
       GElf_Off start = offset & -pagesize;
       GElf_Off end = (offset + filesz + pagesize - 1) & -pagesize;
+
+      /* Make sure end didn't wrap around. */
+      if (unlikely (end < start))
+        goto bad_elf;
+
+      /* The final contents_size is the trimmed last segment's end, which
+	 may be smaller than an earlier segment's start (segments_end above
+	 tracks the last PT_LOAD, not the maximum).  Skip any segment that
+	 falls entirely past it: otherwise buffer + start would be out of
+	 bounds and end - start would underflow into a huge read length.
+	 Mirrors the file_trimmed_end check in dwfl_segment_report_module.  */
+      if (start >= (GElf_Off) contents_size)
+        continue;
       if (end > (GElf_Off) contents_size)
         end = contents_size;
       nread = (*read_memory) (arg, buffer + start,
@@ -360,10 +397,7 @@ elf_from_remote_memory (GElf_Addr ehdr_vma,
 
   Elf *elf = elf_memory ((char *) buffer, contents_size);
   if (elf == NULL)
-    {
-      free (buffer);
-      goto libelf_error;
-    }
+    goto libelf_error;
 
   elf->flags |= ELF_F_MALLOCED;
   if (loadbasep != NULL)

@@ -31,7 +31,7 @@
 #endif
 
 #include <dwarf.h>
-#include "../libebl/libebl.h"
+#include "libebl.h"
 #include "cfi.h"
 #include "memory-access.h"
 #include "encoded-value.h"
@@ -125,6 +125,15 @@ execute_cfi (Dwarf_CFI *cache,
     fs->regs[regno].value = (r_value);			\
   } while (0)
 
+  /* The AARCH64 DWARF ABI states that register 34 (ra_sign_state) must
+     be initialized to 0. So do it before executing the CFI. */
+  if (cache->e_machine == EM_AARCH64)
+    {
+      if (unlikely (! enough_registers (DW_AARCH64_RA_SIGN_STATE, &fs, &result)))
+	goto out;
+      fs->regs[DW_AARCH64_RA_SIGN_STATE].value = 0;
+    }
+
   while (program < end)
     {
       uint8_t opcode = *program++;
@@ -137,6 +146,7 @@ execute_cfi (Dwarf_CFI *cache,
 	  /* These cases move LOC, i.e. "create a new table row".  */
 
 	case DW_CFA_advance_loc1:
+	  cfi_assert (program + 1 <= end);
 	  operand = *program++;
 	  FALLTHROUGH;
 	case DW_CFA_advance_loc + 0 ... DW_CFA_advance_loc + CFI_PRIMARY_MAX:
@@ -239,6 +249,7 @@ execute_cfi (Dwarf_CFI *cache,
 
 	case DW_CFA_offset_extended_sf:
 	  get_uleb128 (operand, program, end);
+	  cfi_assert (program < end);
 	  get_sleb128 (sf_offset, program, end);
 	offset_extended_sf:
 	  offset = sf_offset * cie->data_alignment_factor;
@@ -294,6 +305,7 @@ execute_cfi (Dwarf_CFI *cache,
 	  get_uleb128 (regno, program, end);
 	  /* DW_FORM_block is a ULEB128 length followed by that many bytes.  */
 	  offset = program - (const uint8_t *) cache->data->d.d_buf;
+	  cfi_assert (program < end);
 	  get_uleb128 (operand, program, end);
 	  cfi_assert (operand <= (Dwarf_Word) (end - program));
 	  program += operand;
@@ -355,7 +367,10 @@ execute_cfi (Dwarf_CFI *cache,
 	    {
 	      /* Toggles the return address state, indicating whether
 		 the return address is encrypted or not on
-		 aarch64. XXX not handled yet.  */
+		 aarch64. */
+	      if (unlikely (! enough_registers (DW_AARCH64_RA_SIGN_STATE, &fs, &result)))
+		goto out;
+	      fs->regs[DW_AARCH64_RA_SIGN_STATE].value ^= 0x1;
 	    }
 	  else
 	    {

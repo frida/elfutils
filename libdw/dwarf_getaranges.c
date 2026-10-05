@@ -1,5 +1,6 @@
 /* Return list address ranges.
    Copyright (C) 2000-2010, 2016, 2017 Red Hat, Inc.
+   Copyright (C) 2023 Mark J. Wielaard <mark@klomp.org>
    This file is part of elfutils.
    Written by Ulrich Drepper <drepper@redhat.com>, 2000.
 
@@ -32,7 +33,6 @@
 #endif
 
 #include <stdlib.h>
-#include <assert.h>
 #include "libdwP.h"
 #include <dwarf.h>
 
@@ -51,6 +51,147 @@ compare_aranges (const void *a, const void *b)
   if (l1->arange.addr != l2->arange.addr)
     return (l1->arange.addr < l2->arange.addr) ? -1 : 1;
   return 0;
+}
+
+/* Convert ARANGELIST into Dwarf_Aranges and store at ARANGES.  */
+static bool
+finalize_aranges (Dwarf *dbg, Dwarf_Aranges **aranges, size_t *naranges,
+		  struct arangelist *arangelist, unsigned int narangelist)
+{
+  /* Allocate the array for the result.  */
+  void *buf = libdw_alloc (dbg, Dwarf_Aranges,
+			   sizeof (Dwarf_Aranges)
+			   + narangelist * sizeof (Dwarf_Arange), 1);
+
+  /* First use the buffer for the pointers, and sort the entries.
+     We'll write the pointers in the end of the buffer, and then
+     copy into the buffer from the beginning so the overlap works.  */
+  eu_static_assert (sizeof (Dwarf_Arange) >= sizeof (Dwarf_Arange *));
+  struct arangelist **sortaranges
+    = (buf + sizeof (Dwarf_Aranges)
+       + ((sizeof (Dwarf_Arange) - sizeof sortaranges[0]) * narangelist));
+
+  /* The list is in LIFO order and usually they come in clumps with
+     ascending addresses.  So fill from the back to probably start with
+     runs already in order before we sort.  */
+  unsigned int i = narangelist;
+  while (i-- > 0)
+    {
+      sortaranges[i] = arangelist;
+      arangelist = arangelist->next;
+    }
+
+  /* Something went wrong if narangelist is less then the actual length
+     of arangelist. */
+  if (arangelist != NULL)
+    {
+      __libdw_seterrno (DWARF_E_UNKNOWN_ERROR);
+      return false;
+    }
+
+  /* Sort by ascending address.  */
+  qsort (sortaranges, narangelist, sizeof sortaranges[0], &compare_aranges);
+
+  /* Now that they are sorted, put them in the final array.
+     The buffers overlap, so we've clobbered the early elements
+     of SORTARANGES by the time we're reading the later ones.  */
+  *aranges = buf;
+  (*aranges)->dbg = dbg;
+  (*aranges)->naranges = narangelist;
+  if (naranges != NULL)
+    *naranges = narangelist;
+  for (i = 0; i < narangelist; ++i)
+    {
+      struct arangelist *elt = sortaranges[i];
+      (*aranges)->info[i] = elt->arange;
+      free (elt);
+    }
+
+  return true;
+}
+
+int
+__libdw_getdieranges (Dwarf *dbg, Dwarf_Aranges **aranges, size_t *naranges)
+{
+  if (dbg == NULL)
+    return -1;
+
+  if (dbg->dieranges != NULL)
+    {
+      *aranges = dbg->dieranges;
+      if (naranges != NULL)
+	*naranges = dbg->dieranges->naranges;
+      return 0;
+    }
+
+  struct arangelist *arangelist = NULL;
+  unsigned int narangelist = 0;
+
+  Dwarf_CU *cu = NULL;
+  while (INTUSE(dwarf_get_units) (dbg, cu, &cu, NULL, NULL, NULL, NULL) == 0)
+    {
+      Dwarf_Addr base;
+      Dwarf_Addr low;
+      Dwarf_Addr high;
+
+      Dwarf_Die cudie = CUDIE (cu);
+
+      /* Skip CUs that only contain type information.  */
+      if (!INTUSE(dwarf_hasattr) (&cudie, DW_AT_low_pc)
+	  && !INTUSE(dwarf_hasattr) (&cudie, DW_AT_ranges))
+	continue;
+
+      ptrdiff_t offset = 0;
+
+      /* Add arange for each range list entry or high_pc and low_pc.  */
+      while ((offset = INTUSE(dwarf_ranges) (&cudie, offset,
+					     &base, &low, &high)) > 0)
+	{
+	  if (offset == -1)
+	    {
+	      __libdw_seterrno (DWARF_E_INVALID_DWARF);
+	      goto fail;
+	    }
+
+	  struct arangelist *new_arange = malloc (sizeof *new_arange);
+	  if (unlikely (new_arange == NULL))
+	    {
+	      __libdw_seterrno (DWARF_E_NOMEM);
+	      goto fail;
+	    }
+
+	  new_arange->arange.addr = low;
+	  new_arange->arange.length = (Dwarf_Word) (high - low);
+	  new_arange->arange.offset = __libdw_first_die_off_from_cu (cu);
+
+	  new_arange->next = arangelist;
+	  arangelist = new_arange;
+	  ++narangelist;
+	}
+    }
+
+  if (narangelist == 0)
+    {
+      if (naranges != NULL)
+	*naranges = 0;
+      *aranges = NULL;
+      return 0;
+    }
+
+  if (!finalize_aranges (dbg, aranges, naranges, arangelist, narangelist))
+    goto fail;
+
+  dbg->dieranges = *aranges;
+  return 0;
+
+fail:
+  while (arangelist != NULL)
+    {
+      struct arangelist *next = arangelist->next;
+      free (arangelist);
+      arangelist = next;
+    }
+  return -1;
 }
 
 int
@@ -124,6 +265,10 @@ dwarf_getaranges (Dwarf *dbg, Dwarf_Aranges **aranges, size_t *naranges)
 			 && length <= DWARF3_LENGTH_MAX_ESCAPE_CODE))
 	goto invalid;
 
+      const unsigned char *endp = readp + length;
+      if (unlikely (endp > readendp))
+	goto invalid;
+
       if (unlikely (readp + 2 > readendp))
 	goto invalid;
 
@@ -182,9 +327,17 @@ dwarf_getaranges (Dwarf *dbg, Dwarf_Aranges **aranges, size_t *naranges)
 	  else
 	    range_length = read_8ubyte_unaligned_inc (dbg, readp);
 
-	  /* Two zero values mark the end.  */
+	  /* Two zero values mark the end.  But in some cases (bugs)
+	     there might be such entries in the middle of the table.
+	     Ignore and continue, we'll check the actual length of
+	     the table to see if we are really at the end.  */
 	  if (range_address == 0 && range_length == 0)
-	    break;
+	    {
+	      if (readp >= endp)
+		break;
+	      else
+		continue;
+	    }
 
 	  /* We don't use alloca for these temporary structures because
 	     the total number of them can be quite large.  */
@@ -222,56 +375,16 @@ dwarf_getaranges (Dwarf *dbg, Dwarf_Aranges **aranges, size_t *naranges)
 
   if (narangelist == 0)
     {
-      assert (arangelist == NULL);
       if (naranges != NULL)
 	*naranges = 0;
       *aranges = NULL;
       return 0;
     }
 
-  /* Allocate the array for the result.  */
-  void *buf = libdw_alloc (dbg, Dwarf_Aranges,
-			   sizeof (Dwarf_Aranges)
-			   + narangelist * sizeof (Dwarf_Arange), 1);
+  if (!finalize_aranges (dbg, aranges, naranges, arangelist, narangelist))
+    goto fail;
 
-  /* First use the buffer for the pointers, and sort the entries.
-     We'll write the pointers in the end of the buffer, and then
-     copy into the buffer from the beginning so the overlap works.  */
-  assert (sizeof (Dwarf_Arange) >= sizeof (Dwarf_Arange *));
-  struct arangelist **sortaranges
-    = (buf + sizeof (Dwarf_Aranges)
-       + ((sizeof (Dwarf_Arange) - sizeof sortaranges[0]) * narangelist));
-
-  /* The list is in LIFO order and usually they come in clumps with
-     ascending addresses.  So fill from the back to probably start with
-     runs already in order before we sort.  */
-  unsigned int i = narangelist;
-  while (i-- > 0)
-    {
-      sortaranges[i] = arangelist;
-      arangelist = arangelist->next;
-    }
-  assert (arangelist == NULL);
-
-  /* Sort by ascending address.  */
-  qsort (sortaranges, narangelist, sizeof sortaranges[0], &compare_aranges);
-
-  /* Now that they are sorted, put them in the final array.
-     The buffers overlap, so we've clobbered the early elements
-     of SORTARANGES by the time we're reading the later ones.  */
-  *aranges = buf;
-  (*aranges)->dbg = dbg;
-  (*aranges)->naranges = narangelist;
   dbg->aranges = *aranges;
-  if (naranges != NULL)
-    *naranges = narangelist;
-  for (i = 0; i < narangelist; ++i)
-    {
-      struct arangelist *elt = sortaranges[i];
-      (*aranges)->info[i] = elt->arange;
-      free (elt);
-    }
-
   return 0;
 }
 INTDEF(dwarf_getaranges)

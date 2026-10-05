@@ -1,5 +1,5 @@
 #! /bin/sh
-# Copyright (C) 2014, 2015 Red Hat, Inc.
+# Copyright (C) 2014, 2015, 2024 Red Hat, Inc.
 # This file is part of elfutils.
 #
 # This file is free software; you can redistribute it and/or modify
@@ -28,11 +28,6 @@ STACKCMD=${bindir}/`program_transform stack`
 else
 STACKCMD=${abs_top_builddir}/src/stack
 fi
-
-# Disable valgrind while dumping because of a bug unmapping libc.so.
-# https://bugs.kde.org/show_bug.cgi?id=327427
-SAVED_VALGRIND_CMD="$VALGRIND_CMD"
-unset VALGRIND_CMD
 
 # Compare with run-stack-d-test.sh to see the output without --inlines.
 # Only two call frames are visible (there is a jump from main to fu or
@@ -73,9 +68,17 @@ TID 13654:
 $STACKCMD: tid 13654: shown max number of frames (6, use -n 0 for unlimited)
 EOF
 
-if [ "x$SAVED_VALGRIND_CMD" != "x" ]; then
-  VALGRIND_CMD="$SAVED_VALGRIND_CMD"
-  export VALGRIND_CMD
-fi
+# With --cfi-type we also see what unwind method was used for each frame:
+testrun_compare ${abs_top_builddir}/src/stack -r -n 6 -c -i -e testfiledwarfinlines --core testfiledwarfinlines.core<<EOF
+PID 13654 - core
+TID 13654:
+#0  0x00000000004006c8 fubar [initial]
+#1  0x00000000004006c8 foobar [inline]
+#2  0x00000000004006c8 bar [inline]
+#3  0x00000000004006c8 foo [inline]
+#4  0x00000000004006c8 _Z2fui [inline]
+#5  0x00000000004004c5 main [eh_frame]
+$STACKCMD: tid 13654: shown max number of frames (6, use -n 0 for unlimited)
+EOF
 
 exit 0

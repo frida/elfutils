@@ -57,11 +57,13 @@ dwarf_frame_cfa (Dwarf_Frame *fs, Dwarf_Op **ops, size_t *nops)
 
     case cfa_expr:
       /* Parse the expression into internal form.  */
+      mutex_lock (fs->cache->lock);
       result = __libdw_intern_expression
 	(NULL, fs->cache->other_byte_order,
 	 fs->cache->e_ident[EI_CLASS] == ELFCLASS32 ? 4 : 8, 4,
 	 &fs->cache->expr_tree, &fs->cfa_data.expr, false, false,
 	 ops, nops, IDX_debug_frame);
+      mutex_unlock (fs->cache->lock);
       break;
 
     case cfa_invalid:

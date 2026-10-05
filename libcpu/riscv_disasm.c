@@ -39,9 +39,9 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "../libebl/libeblP.h"
+#include "libeblP.h"
 
-#define MACHINE_ENCODING __LITTLE_ENDIAN
+#define MACHINE_ENCODING LITTLE_ENDIAN
 #include "memory-access.h"
 
 
@@ -77,7 +77,7 @@ static const char *regnames[32] =
     "a6", "a7", "s2", "s3", "s4", "s5", "s6", "s7",
     "s8", "s9", "s10", "s11", "t3", "t4", "t5", "t6"
   };
-#define REG(nr) ((char *) regnames[nr])
+#define REG(nr) regnames[nr]
 #define REGP(nr) REG (8 + (nr))
 
 
@@ -88,7 +88,7 @@ static const char *fregnames[32] =
     "fa6", "fa7", "fs2", "fs3", "fs4", "fs5", "fs6", "fs7",
     "fs8", "fs9", "fs10", "fs11", "ft8", "ft9", "ft10", "ft11"
   };
-#define FREG(nr) ((char *) fregnames[nr])
+#define FREG(nr) fregnames[nr]
 #define FREGP(nr) FREG (8 + (nr))
 
 
@@ -163,9 +163,12 @@ riscv_disasm (Ebl *ebl,
 	  break;
 	}
 
-      char *mne = NULL;
-      char mnebuf[32];
-      char *op[5] = { NULL, NULL, NULL, NULL, NULL };
+      const char *mne = NULL;
+      /* Max length is 24, which is "illegal", so we print it as
+         "0x<48 hex chars>"
+         See: No instruction encodings defined for these sizes yet, below  */
+      char mnebuf[50];
+      const char *op[5] = { NULL, NULL, NULL, NULL, NULL };
       char immbuf[32];
       size_t len;
       char *strp = NULL;
@@ -397,7 +400,7 @@ riscv_disasm (Ebl *ebl,
 		    {
 		      "sub", "xor", "or", "and", "subw", "addw", NULL, NULL
 		    };
-		  mne = (char *) arithmne[((first >> 10) & 0x4) | ((first >> 5) & 0x3)];
+		  mne = arithmne[((first >> 10) & 0x4) | ((first >> 5) & 0x3)];
 		}
 		op[0] = op[1] = REGP ((first >> 7) & 0x7);
 	      break;
@@ -569,7 +572,7 @@ riscv_disasm (Ebl *ebl,
 		{
 		  NULL, NULL, "flw", "fld", "flq", NULL, NULL, NULL
 		};
-	      mne = (char *) (idx == 0x00 ? loadmne[func] : floadmne[func]);
+	      mne = idx == 0x00 ? loadmne[func] : floadmne[func];
 	      break;
 	    case 0x03:
 	      // MISC-MEM
@@ -592,8 +595,8 @@ riscv_disasm (Ebl *ebl,
 		  uint32_t succ = (word >> 24) & 0xf;
 		  if (pred != 0xf || succ != 0xf)
 		    {
-		      op[0] = (char *) order[succ];
-		      op[1] = (char *) order[pred];
+		      op[0] = order[succ];
+		      op[1] = order[pred];
 		     }
 		   mne = "fence";
 		}
@@ -611,7 +614,7 @@ riscv_disasm (Ebl *ebl,
 		  "addi", NULL, "slti", "sltiu", "xori", NULL, "ori", "andi"
 		};
 	      func = (word >> 12) & 0x7;
-	      mne = (char *) opimmmne[func];
+	      mne = opimmmne[func];
 	      if (mne == NULL)
 		{
 		  const uint64_t shiftmask = ebl->class == ELFCLASS32 ? 0x1f : 0x3f;
@@ -694,7 +697,7 @@ riscv_disasm (Ebl *ebl,
 		{
 		  NULL, NULL, "fsw", "fsd", "fsq", NULL, NULL, NULL
 		};
-	      mne = (char *) (idx == 0x08 ? storemne[func] : fstoremne[func]);
+	      mne = idx == 0x08 ? storemne[func] : fstoremne[func];
 	      break;
 	    case 0x0b:
 	      // AMO
@@ -775,7 +778,7 @@ riscv_disasm (Ebl *ebl,
 		    }
 		  else
 		    {
-		      mne = (char *) (idx == 0x0c ? arithmne2[func] : arithmne3[func]);
+		      mne = idx == 0x0c ? arithmne2[func] : arithmne3[func];
 		      op[1] = REG (rs1);
 		      op[2] = REG (rs2);
 		    }
@@ -808,7 +811,7 @@ riscv_disasm (Ebl *ebl,
 		  op[2] = FREG (rs2);
 		  op[3] = FREG (rs3);
 		  if (rm != 0x7)
-		    op[4] = (char *) rndmode[rm];
+		    op[4] = rndmode[rm];
 		}
 	      break;
 	    case 0x14:
@@ -836,7 +839,7 @@ riscv_disasm (Ebl *ebl,
 		      op[1] = FREG (rs1);
 		      op[2] = FREG (rs2);
 		      if (rm != 0x7)
-			op[3] = (char *) rndmode[rm];
+			op[3] = rndmode[rm];
 		    }
 		  else if (func == 0x1c && width != 2 && rs2 == 0 && rm <= 1)
 		    {
@@ -947,7 +950,7 @@ riscv_disasm (Ebl *ebl,
 			}
 		      mne = mnebuf;
 		      if (rm != 0x7 && (func == 0x18 || width == 0 || rs2 >= 2))
-			op[2] = (char *) rndmode[rm];
+			op[2] = rndmode[rm];
 		    }
 		  else if (func == 0x0b && rs2 == 0)
 		    {
@@ -958,7 +961,7 @@ riscv_disasm (Ebl *ebl,
 		      *cp = '\0';
 		      mne = mnebuf;
 		      if (rm != 0x7)
-			op[2] = (char *) rndmode[rm];
+			op[2] = rndmode[rm];
 		    }
 		  else if (func == 0x05 && rm < 2)
 		    {
@@ -1004,7 +1007,7 @@ riscv_disasm (Ebl *ebl,
 		  "beq", "bne", NULL, NULL, "blt", "bge", "bltu", "bgeu"
 		};
 	      func = (word >> 12) & 0x7;
-	      mne = (char *) branchmne[func];
+	      mne = branchmne[func];
 	      if (rs1 == 0 && func == 5)
 		{
 		  op[0] = op[1];
@@ -1032,7 +1035,7 @@ riscv_disasm (Ebl *ebl,
 	      else if (func == 5 || func == 7)
 		{
 		  // binutils use these opcodes and the reverse parameter order
-		  char *tmp = op[0];
+		  const char *tmp = op[0];
 		  op[0] = op[1];
 		  op[1] = tmp;
 		  mne = func == 5 ? "ble" : "bleu";
@@ -1094,21 +1097,21 @@ riscv_disasm (Ebl *ebl,
 	      else if ((word & 0x3000) == 0x2000 && rs1 == 0)
 		{
 		  uint32_t csr = word >> 20;
-		  if (/* csr >= 0x000 && */ csr <= 0x007)
+		  if (/* csr >= 0x000 && */ csr <= 0x003)
 		    {
 		      static const char *const unprivrw[4] =
 			{
 			  NULL, "frflags", "frrm", "frsr",
 			};
-		      mne = (char *) unprivrw[csr - 0x000];
+		      mne = unprivrw[csr - 0x000];
 		    }
-		  else if (csr >= 0xc00 && csr <= 0xc03)
+		  else if (csr >= 0xc00 && csr <= 0xc02)
 		    {
 		      static const char *const unprivrolow[3] =
 			{
 			  "rdcycle", "rdtime", "rdinstret"
 			};
-		      mne = (char *) unprivrolow[csr - 0xc00];
+		      mne = unprivrolow[csr - 0xc00];
 		    }
 		  op[0] = REG ((word >> 7) & 0x1f);
 		}
@@ -1125,7 +1128,7 @@ riscv_disasm (Ebl *ebl,
 			{
 			  NULL, "fsflagsi", "fsrmi", NULL
 			};
-		      mne = (char *) ((word & 0x4000) == 0 ? unprivrs : unprivrsi)[csr - 0x000];
+		      mne = ((word & 0x4000) == 0 ? unprivrs : unprivrsi)[csr - 0x000];
 
 		      if ((word & 0x4000) == 0)
 			op[0] = REG ((word >> 15) & 0x1f);
@@ -1256,12 +1259,12 @@ riscv_disasm (Ebl *ebl,
 		  if (rd != 0)
 		    op[last++] = REG (rd);
 		  struct known_csrs key = { csr, NULL };
-		  struct known_csrs *found = bsearch (&key, known,
-						      sizeof (known) / sizeof (known[0]),
-						      sizeof (known[0]),
-						      compare_csr);
+		  const struct known_csrs *found = bsearch (&key, known,
+							    sizeof (known) / sizeof (known[0]),
+							    sizeof (known[0]),
+							    compare_csr);
 		  if (found)
-		    op[last] = (char *) found->name;
+		    op[last] = found->name;
 		  else
 		    {
 		      snprintf (addrbuf, sizeof (addrbuf), "0x%" PRIx32, csr);
@@ -1286,7 +1289,7 @@ riscv_disasm (Ebl *ebl,
 		  else if (instr == 3 && rd == 0)
 		    mne = "csrc";
 		  else
-		    mne = (char *) mnecsr[instr];
+		    mne = mnecsr[instr];
 		}
 	      break;
 	    default:

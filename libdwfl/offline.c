@@ -1,5 +1,7 @@
 /* Recover relocatibility for addresses computed from debug information.
    Copyright (C) 2005-2009, 2012 Red Hat, Inc.
+   Copyright (C) 2022 Mark J. Wielaard <mark@klomp.org>
+   Copyright (C) 2022 Google LLC
    This file is part of elfutils.
 
    This file is free software; you can redistribute it and/or modify
@@ -30,9 +32,9 @@
 # include <config.h>
 #endif
 
+#include "libelfP.h"
 #include "libdwflP.h"
 #include <fcntl.h>
-#include <unistd.h>
 
 /* Since dwfl_report_elf lays out the sections already, this will only be
    called when the section headers of the debuginfo file are being
@@ -49,10 +51,11 @@ dwfl_offline_section_address (Dwfl_Module *mod,
 			      const GElf_Shdr *shdr __attribute__ ((unused)),
 			      Dwarf_Addr *addr)
 {
-  assert (mod->e_type == ET_REL);
-  assert (shdr->sh_addr == 0);
-  assert (shdr->sh_flags & SHF_ALLOC);
-  assert (shndx != 0);
+  if (mod->e_type != ET_REL
+      || shdr->sh_addr != 0
+      || !(shdr->sh_flags & SHF_ALLOC)
+      || shndx == 0)
+    return -1;
 
   if (mod->debug.elf == NULL)
     /* We are only here because sh_addr is zero even though layout is complete.
@@ -150,9 +153,9 @@ process_elf (Dwfl *dwfl, const char *name, const char *file_name, int fd,
       /* Don't keep the file descriptor around.  */
       if (mod->main.fd != -1 && elf_cntl (mod->main.elf, ELF_C_FDREAD) == 0)
 	{
-	  /* Grab the dir path in case we want to report this file as
+	  /* Grab the path in case we want to report this file as
 	     Dwarf later.  */
-	  mod->elfdir = __libdw_debugdir (mod->main.fd);
+	  mod->elfpath = __libdw_elfpath (mod->main.fd);
 	  close (mod->main.fd);
 	  mod->main.fd = -1;
 	}
@@ -233,8 +236,11 @@ process_archive_member (Dwfl *dwfl, const char *name, const char *file_name,
   free (member_name);
   free (module_name);
 
-  if (*mod == NULL)		/* process_file called elf_end.  */
-    return ELF_C_NULL;
+  if (*mod == NULL)
+    {
+      elf_end (member);
+      return ELF_C_NULL;
+    }
 
   /* Advance the archive-reading offset for the next iteration.  */
   return elf_next (member);
@@ -248,7 +254,8 @@ process_archive (Dwfl *dwfl, const char *name, const char *file_name, int fd,
 
 {
   Dwfl_Module *mod = NULL;
-  Elf *member = elf_begin (fd, ELF_C_READ_MMAP_PRIVATE, archive);
+  /* elf_begin supports opening archives even with fd == -1 passed.  */
+  Elf *member = elf_begin (fd, archive->cmd, archive);
   if (unlikely (member == NULL)) /* Empty archive.  */
     {
       __libdwfl_seterrno (DWFL_E_BADELF);
@@ -257,14 +264,15 @@ process_archive (Dwfl *dwfl, const char *name, const char *file_name, int fd,
 
   while (process_archive_member (dwfl, name, file_name, predicate,
 				 fd, member, &mod) != ELF_C_NULL)
-    member = elf_begin (fd, ELF_C_READ_MMAP_PRIVATE, archive);
+    member = elf_begin (fd, archive->cmd, archive);
 
   /* We can drop the archive Elf handle even if we're still using members
      in live modules.  When the last module's elf_end on a member returns
      zero, that module will close FD.  If no modules survived the predicate,
      we are all done with the file right here.  */
   if (mod != NULL		/* If no modules, caller will clean up.  */
-      && elf_end (archive) == 0)
+      && elf_end (archive) == 0
+      && fd >= 0)
     close (fd);
 
   return mod;
@@ -316,3 +324,27 @@ dwfl_report_offline (Dwfl *dwfl, const char *name,
   return __libdwfl_report_offline (dwfl, name, file_name, fd, closefd, NULL);
 }
 INTDEF (dwfl_report_offline)
+
+Dwfl_Module *
+dwfl_report_offline_memory (Dwfl *dwfl, const char *name,
+			    const char *file_name, char *data, size_t size)
+{
+  if (dwfl == NULL)
+    return NULL;
+
+  Elf *elf;
+  Dwfl_Error error = __libdw_open_elf_memory (data, size, &elf, true);
+  if (error != DWFL_E_NOERROR)
+    {
+      __libdwfl_seterrno (error);
+      return NULL;
+    }
+  /* It is ok to pass fd == -1 here, because libelf uses it as a value for
+     "no file opened" and supports working with files without fd, thanks to
+     the existence of the elf_memory function.  */
+  Dwfl_Module *mod = process_file (dwfl, name, file_name, -1, elf, NULL);
+  if (mod == NULL)
+    elf_end (elf);
+  return mod;
+}
+INTDEF (dwfl_report_offline_memory)

@@ -54,11 +54,38 @@ add_section_data (Elf *elf, char *buf, size_t len)
       exit (1);
     }
 
+  if (data->d_buf != NULL)
+    {
+      printf ("newdata d_buf isn't NULL\n");
+      exit (1);
+    }
+
+  if (data->d_size != 0)
+    {
+      printf ("newdata d_size isn't 0\n");
+      exit (1);
+    }
+
+  if (data->d_type != ELF_T_BYTE)
+    {
+      printf ("newdata d_type isn't ELF_T_BYTE\n");
+      exit (1);
+    }
+
+  if (data->d_align != 1)
+    {
+      printf ("newdata d_align isn't 1\n");
+      exit (1);
+    }
+
+  if (data->d_version != EV_CURRENT)
+    {
+      printf ("newdata d_version isn't EV_CURRENT\n");
+      exit (1);
+    }
+
   data->d_buf = buf;
-  data->d_type = ELF_T_BYTE;
   data->d_size = len;
-  data->d_align = 1;
-  data->d_version = EV_CURRENT;
 
   // Let the library compute the internal structure information.
   if (elf_update (elf, ELF_C_NULL) < 0)

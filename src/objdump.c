@@ -23,7 +23,6 @@
 #include <argp.h>
 #include <fcntl.h>
 #include <inttypes.h>
-#include <libintl.h>
 #include <locale.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -100,8 +99,8 @@ static int handle_elf (Elf *elf, const char *prefix, const char *fname,
 
 
 #define INTERNAL_ERROR(fname) \
-  error (EXIT_FAILURE, 0, _("%s: INTERNAL ERROR %d (%s): %s"),      \
-	 fname, __LINE__, PACKAGE_VERSION, elf_errmsg (-1))
+  error_exit (0, _("%s: INTERNAL ERROR %d (%s): %s"),      \
+	      fname, __LINE__, PACKAGE_VERSION, elf_errmsg (-1))
 
 
 /* List of sections which should be used.  */
@@ -255,7 +254,7 @@ process_file (const char *fname, bool more_than_one)
 	    INTERNAL_ERROR (fname);
 
 	  if (close (fd) != 0)
-	    error (EXIT_FAILURE, errno, _("while close `%s'"), fname);
+	    error_exit (errno, _("while close `%s'"), fname);
 
 	  return result;
 	}
@@ -267,7 +266,7 @@ process_file (const char *fname, bool more_than_one)
 	    INTERNAL_ERROR (fname);
 
 	  if (close (fd) != 0)
-	    error (EXIT_FAILURE, errno, _("while close `%s'"), fname);
+	    error_exit (errno, _("while close `%s'"), fname);
 
 	  return result;
 	}
@@ -314,7 +313,8 @@ handle_ar (int fd, Elf *elf, const char *prefix, const char *fname,
       Elf_Arhdr *arhdr = elf_getarhdr (subelf);
 
       /* Skip over the index entries.  */
-      if (strcmp (arhdr->ar_name, "/") != 0
+      if (arhdr != NULL
+	  && strcmp (arhdr->ar_name, "/") != 0
 	  && strcmp (arhdr->ar_name, "//") != 0)
 	{
 	  if (elf_kind (subelf) == ELF_K_ELF)
@@ -581,12 +581,12 @@ show_full_content (Ebl *ebl, const char *fname, uint32_t shstrndx)
 		printf ("%02hhx%02hhx%02hhx%02hhx ",
 			cp[inner], cp[inner + 1], cp[inner + 2],
 			cp[inner + 3]);
-	      fputc_unlocked (' ', stdout);
+	      fputc (' ', stdout);
 
 	      for (size_t inner = 0; inner < 16; ++inner)
-		fputc_unlocked (isascii (cp[inner]) && isprint (cp[inner])
+		fputc (isascii (cp[inner]) && isprint (cp[inner])
 				? cp[inner] : '.', stdout);
-	      fputc_unlocked ('\n', stdout);
+	      fputc ('\n', stdout);
 	    }
 
 	  printf (" %04zx ", cnt);
@@ -602,14 +602,14 @@ show_full_content (Ebl *ebl, const char *fname, uint32_t shstrndx)
 
 	  for (inner = 2 * (16 - inner) + (16 - inner + 3) / 4 + 1; inner > 0;
 	       --inner)
-	    fputc_unlocked (' ', stdout);
+	    fputc (' ', stdout);
 
 	  for (inner = 0; inner < remaining; ++inner)
-	    fputc_unlocked (isascii (cp[inner]) && isprint (cp[inner])
+	    fputc (isascii (cp[inner]) && isprint (cp[inner])
 			    ? cp[inner] : '.', stdout);
-	  fputc_unlocked ('\n', stdout);
+	  fputc ('\n', stdout);
 
-	  fputc_unlocked ('\n', stdout);
+	  fputc ('\n', stdout);
 	}
     }
 
@@ -641,12 +641,12 @@ disasm_output (char *buf, size_t buflen, void *arg)
     printf ("%8" PRIx64 ":   ", (uint64_t) info->addr);
 
   if (info->bytes_color != NULL)
-    fputs_unlocked (info->bytes_color, stdout);
+    fputs (info->bytes_color, stdout);
   size_t cnt;
   for (cnt = 0; cnt < (size_t) MIN (info->cur - info->last_end, 8); ++cnt)
     printf (" %02" PRIx8, info->last_end[cnt]);
   if (info->bytes_color != NULL)
-    fputs_unlocked (color_off, stdout);
+    fputs (color_off, stdout);
 
   printf ("%*s %.*s\n",
 	  (int) (8 - cnt) * 3 + 1, "", (int) buflen, buf);
@@ -664,12 +664,12 @@ disasm_output (char *buf, size_t buflen, void *arg)
 	printf ("%8" PRIx64 ":   ", (uint64_t) info->addr);
 
       if (info->bytes_color != NULL)
-	fputs_unlocked (info->bytes_color, stdout);
+	fputs (info->bytes_color, stdout);
       for (; cnt < (size_t) (info->cur - info->last_end); ++cnt)
 	printf (" %02" PRIx8, info->last_end[cnt]);
       if (info->bytes_color != NULL)
-	fputs_unlocked (color_off, stdout);
-      putchar_unlocked ('\n');
+	fputs (color_off, stdout);
+      putchar ('\n');
       info->addr += info->cur - info->last_end - 8;
     }
 
@@ -684,7 +684,7 @@ show_disasm (Ebl *ebl, const char *fname, uint32_t shstrndx)
 {
   DisasmCtx_t *ctx = disasm_begin (ebl, ebl->elf, NULL /* XXX TODO */);
   if (ctx == NULL)
-    error (EXIT_FAILURE, 0, _("cannot disassemble"));
+    error_exit (0, _("cannot disassemble"));
 
   Elf_Scn *scn = NULL;
   while ((scn = elf_nextscn (ebl->elf, scn)) != NULL)
@@ -755,8 +755,7 @@ handle_elf (Elf *elf, const char *prefix, const char *fname,
   /* Get the backend for this object file type.  */
   Ebl *ebl = ebl_openbackend (elf);
   if (ebl == NULL)
-    error (EXIT_FAILURE, 0,
-	   _("cannot create backend for elf file"));
+    error_exit (0, _("cannot create backend for elf file"));
 
   printf ("%s: elf%d-%s\n\n",
 	  fname, gelf_getclass (elf) == ELFCLASS32 ? 32 : 64,
@@ -777,8 +776,7 @@ handle_elf (Elf *elf, const char *prefix, const char *fname,
   /* Get the section header string table index.  */
   size_t shstrndx;
   if (elf_getshdrstrndx (ebl->elf, &shstrndx) < 0)
-    error (EXIT_FAILURE, 0,
-	   _("cannot get section header string table index"));
+    error_exit (0, _("cannot get section header string table index"));
 
   int result = 0;
   if (print_disasm)

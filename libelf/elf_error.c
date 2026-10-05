@@ -32,7 +32,6 @@
 #endif
 
 #include <assert.h>
-#include <libintl.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -41,11 +40,7 @@
 
 
 /* The error number.  */
-static
-#ifdef HAVE_THREAD_STORAGE_CLASS
-__thread
-#endif
-int global_error;
+static __thread int global_error;
 
 
 int

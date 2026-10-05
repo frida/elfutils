@@ -31,11 +31,11 @@
 #endif
 
 #include <dwarf.h>
-#include <search.h>
 #include <stdlib.h>
 #include <assert.h>
 
 #include <libdwP.h>
+#include "eu-search.h"
 
 
 static bool
@@ -137,9 +137,9 @@ loc_compare (const void *p1, const void *p2)
 
 /* For each DW_OP_implicit_value, we store a special entry in the cache.
    This points us directly to the block data for later fetching.
-   Returns zero on success, -1 on bad DWARF or 1 if tsearch failed.  */
+   Returns zero on success, -1 on bad DWARF or 1 if eu_tsearch failed.  */
 static int
-store_implicit_value (Dwarf *dbg, void **cache, Dwarf_Op *op)
+store_implicit_value (Dwarf *dbg, search_tree *cache, Dwarf_Op *op)
 {
   if (dbg == NULL)
     return -1;
@@ -147,11 +147,14 @@ store_implicit_value (Dwarf *dbg, void **cache, Dwarf_Op *op)
 					   sizeof (struct loc_block_s), 1);
   const unsigned char *data = (const unsigned char *) (uintptr_t) op->number2;
   /* Skip the block length.  */
-  __libdw_get_uleb128_unchecked (&data);
+  Dwarf_Word length;
+  get_uleb128_unchecked (length, data);
+  if (length != op->number)
+    return -1;
   block->addr = op;
   block->data = (unsigned char *) data;
   block->length = op->number;
-  if (unlikely (tsearch (block, cache, loc_compare) == NULL))
+  if (unlikely (eu_tsearch_nolock (block, cache, loc_compare) == NULL))
     return 1;
   return 0;
 }
@@ -164,7 +167,8 @@ dwarf_getlocation_implicit_value (Dwarf_Attribute *attr, const Dwarf_Op *op,
     return -1;
 
   struct loc_block_s fake = { .addr = (void *) op };
-  struct loc_block_s **found = tfind (&fake, &attr->cu->locs, loc_compare);
+  struct loc_block_s **found = eu_tfind (&fake, &attr->cu->locs_tree,
+					 loc_compare);
   if (unlikely (found == NULL))
     {
       __libdw_seterrno (DWARF_E_NO_BLOCK);
@@ -207,14 +211,18 @@ is_constant_offset (Dwarf_Attribute *attr,
     }
 
   /* Check whether we already cached this location.  */
+  mutex_lock (attr->cu->intern_lock);
   struct loc_s fake = { .addr = attr->valp };
-  struct loc_s **found = tfind (&fake, &attr->cu->locs, loc_compare);
+  struct loc_s **found = eu_tfind_nolock (&fake, &attr->cu->locs_tree, loc_compare);
 
   if (found == NULL)
     {
       Dwarf_Word offset;
       if (INTUSE(dwarf_formudata) (attr, &offset) != 0)
-	return -1;
+	{
+	  mutex_unlock (attr->cu->intern_lock);
+	  return -1;
+	}
 
       Dwarf_Op *result = libdw_alloc (attr->cu->dbg,
 				      Dwarf_Op, sizeof (Dwarf_Op), 1);
@@ -232,9 +240,10 @@ is_constant_offset (Dwarf_Attribute *attr,
       newp->loc = result;
       newp->nloc = 1;
 
-      found = tsearch (newp, &attr->cu->locs, loc_compare);
+      found = eu_tsearch_nolock (newp, &attr->cu->locs_tree, loc_compare);
     }
 
+  mutex_unlock (attr->cu->intern_lock);
   assert ((*found)->nloc == 1);
 
   if (llbuf != NULL)
@@ -250,7 +259,7 @@ int
 internal_function
 __libdw_intern_expression (Dwarf *dbg, bool other_byte_order,
 			   unsigned int address_size, unsigned int ref_size,
-			   void **cache, const Dwarf_Block *block,
+			   search_tree *cache, const Dwarf_Block *block,
 			   bool cfap, bool valuep,
 			   Dwarf_Op **llbuf, size_t *listlen, int sec_index)
 {
@@ -263,7 +272,7 @@ __libdw_intern_expression (Dwarf *dbg, bool other_byte_order,
 
   /* Check whether we already looked at this list.  */
   struct loc_s fake = { .addr = block->data };
-  struct loc_s **found = tfind (&fake, cache, loc_compare);
+  struct loc_s **found = eu_tfind_nolock (&fake, cache, loc_compare);
   if (found != NULL)
     {
       /* We already saw it.  */
@@ -393,6 +402,7 @@ __libdw_intern_expression (Dwarf *dbg, bool other_byte_order,
 	case DW_OP_form_tls_address:
 	case DW_OP_GNU_push_tls_address:
 	case DW_OP_stack_value:
+	case DW_OP_GNU_uninit:
 	  /* No operand.  */
 	  break;
 
@@ -651,7 +661,7 @@ __libdw_intern_expression (Dwarf *dbg, bool other_byte_order,
   newp->addr = block->data;
   newp->loc = result;
   newp->nloc = *listlen;
-  (void) tsearch (newp, cache, loc_compare);
+  eu_tsearch_nolock (newp, cache, loc_compare);
 
   /* We did it.  */
   return 0;
@@ -669,13 +679,17 @@ getlocation (struct Dwarf_CU *cu, const Dwarf_Block *block,
       return 0;
     }
 
-  return __libdw_intern_expression (cu->dbg, cu->dbg->other_byte_order,
-				    cu->address_size, (cu->version == 2
-						       ? cu->address_size
-						       : cu->offset_size),
-				    &cu->locs, block,
-				    false, false,
-				    llbuf, listlen, sec_index);
+  mutex_lock (cu->intern_lock);
+  int res = __libdw_intern_expression (cu->dbg, cu->dbg->other_byte_order,
+				       cu->address_size, (cu->version == 2
+							  ? cu->address_size
+							  : cu->offset_size),
+				       &cu->locs_tree, block,
+				       false, false,
+				       llbuf, listlen, sec_index);
+  mutex_unlock (cu->intern_lock);
+
+  return res;
 }
 
 int
@@ -808,6 +822,12 @@ initial_offset (Dwarf_Attribute *attr, ptrdiff_t *offset)
 			    : DWARF_E_NO_DEBUG_LOCLISTS),
 			    NULL, &start_offset) == NULL)
 	return -1;
+
+      Dwarf_Off loc_off;
+      if (INTUSE(dwarf_cu_dwp_section_info) (attr->cu, DW_SECT_LOCLISTS,
+					     &loc_off, NULL) != 0)
+	return -1;
+      start_offset += loc_off;
     }
 
   *offset = start_offset;

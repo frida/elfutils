@@ -34,41 +34,6 @@
 #include "libelfP.h"
 #include "common.h"
 
-#ifndef htobe64
-# if __BYTE_ORDER == __LITTLE_ENDIAN
-#  ifdef HAVE_BSWAP64
-#   define htobe64(x) __builtin_bswap64 (x)
-#   define be64toh(x) __builtin_bswap64 (x)
-#  else
-#   define htobe64(x) elf_bswap64 (x)
-#   define be64toh(x) elf_bswap64 (x)
-
-typedef union
-{
-  uint8_t bytes[8];
-  uint64_t u64;
-} Bitcast_U64;
-
-static uint64_t
-elf_bswap64 (uint64_t x)
-{
-  Bitcast_U64 input, output;
-
-  input.u64 = x;
-
-  for (int i = 0; i < 8; i++)
-    output.bytes[i] = input.bytes[7 - i];
-
-  return output.u64;
-}
-
-#  endif
-# else
-#  define htobe64(x) x
-#  define be64toh(x) x
-# endif
-#endif
-
 int
 elf_compress_gnu (Elf_Scn *scn, int inflate, unsigned int flags)
 {
@@ -94,25 +59,30 @@ elf_compress_gnu (Elf_Scn *scn, int inflate, unsigned int flags)
   Elf64_Xword sh_flags;
   Elf64_Word sh_type;
   Elf64_Xword sh_addralign;
+  union shdr
+  {
+    Elf32_Shdr *s32;
+    Elf64_Shdr *s64;
+  } shdr;
   if (elfclass == ELFCLASS32)
     {
-      Elf32_Shdr *shdr = elf32_getshdr (scn);
-      if (shdr == NULL)
+      shdr.s32 = elf32_getshdr (scn);
+      if (shdr.s32 == NULL)
 	return -1;
 
-      sh_flags = shdr->sh_flags;
-      sh_type = shdr->sh_type;
-      sh_addralign = shdr->sh_addralign;
+      sh_flags = shdr.s32->sh_flags;
+      sh_type = shdr.s32->sh_type;
+      sh_addralign = shdr.s32->sh_addralign;
     }
   else
     {
-      Elf64_Shdr *shdr = elf64_getshdr (scn);
-      if (shdr == NULL)
+      shdr.s64 = elf64_getshdr (scn);
+      if (shdr.s64 == NULL)
 	return -1;
 
-      sh_flags = shdr->sh_flags;
-      sh_type = shdr->sh_type;
-      sh_addralign = shdr->sh_addralign;
+      sh_flags = shdr.s64->sh_flags;
+      sh_type = shdr.s64->sh_type;
+      sh_addralign = shdr.s64->sh_addralign;
     }
 
   /* Allocated sections, or sections that are already are compressed
@@ -138,7 +108,8 @@ elf_compress_gnu (Elf_Scn *scn, int inflate, unsigned int flags)
       size_t orig_size, new_size, orig_addralign;
       void *out_buf = __libelf_compress (scn, hsize, elfdata,
 					 &orig_size, &orig_addralign,
-					 &new_size, force);
+					 &new_size, force,
+					 /* use_zstd */ false);
 
       /* Compression would make section larger, don't change anything.  */
       if (out_buf == (void *) -1)
@@ -156,15 +127,9 @@ elf_compress_gnu (Elf_Scn *scn, int inflate, unsigned int flags)
 	 sh_flags won't have a SHF_COMPRESSED hint in the GNU format.
 	 Just adjust the sh_size.  */
       if (elfclass == ELFCLASS32)
-	{
-	  Elf32_Shdr *shdr = elf32_getshdr (scn);
-	  shdr->sh_size = new_size;
-	}
+	  shdr.s32->sh_size = new_size;
       else
-	{
-	  Elf64_Shdr *shdr = elf64_getshdr (scn);
-	  shdr->sh_size = new_size;
-	}
+	  shdr.s64->sh_size = new_size;
 
       __libelf_reset_rawdata (scn, out_buf, new_size, 1, ELF_T_BYTE);
 
@@ -203,8 +168,11 @@ elf_compress_gnu (Elf_Scn *scn, int inflate, unsigned int flags)
       /* One more sanity check, size should be bigger than original
 	 data size plus some overhead (4 chars ZLIB + 8 bytes size + 6
 	 bytes zlib stream overhead + 5 bytes overhead max for one 16K
-	 block) and should fit into a size_t.  */
-      if (gsize + 4 + 8 + 6 + 5 < data->d_size || gsize > SIZE_MAX)
+	 block) and should fit into a size_t (or in UINT32_MAX for
+	 32bit ELF).  */
+      if (gsize + 4 + 8 + 6 + 5 < data->d_size
+	  || gsize > SIZE_MAX
+	  || (elfclass == ELFCLASS32 && gsize > UINT32_MAX))
 	{
 	  __libelf_seterrno (ELF_E_NOT_COMPRESSED);
 	  return -1;
@@ -213,7 +181,7 @@ elf_compress_gnu (Elf_Scn *scn, int inflate, unsigned int flags)
       size_t size = gsize;
       size_t size_in = data->d_size - hsize;
       void *buf_in = data->d_buf + hsize;
-      void *buf_out = __libelf_decompress (buf_in, size_in, size);
+      void *buf_out = __libelf_decompress (ELFCOMPRESS_ZLIB, buf_in, size_in, size);
       if (buf_out == NULL)
 	return -1;
 
@@ -221,15 +189,9 @@ elf_compress_gnu (Elf_Scn *scn, int inflate, unsigned int flags)
 	 sh_flags won't have a SHF_COMPRESSED hint in the GNU format.
 	 Just adjust the sh_size.  */
       if (elfclass == ELFCLASS32)
-	{
-	  Elf32_Shdr *shdr = elf32_getshdr (scn);
-	  shdr->sh_size = size;
-	}
+	shdr.s32->sh_size = size;
       else
-	{
-	  Elf64_Shdr *shdr = elf64_getshdr (scn);
-	  shdr->sh_size = size;
-	}
+	shdr.s64->sh_size = size;
 
       __libelf_reset_rawdata (scn, buf_out, size, sh_addralign,
 			      __libelf_data_type (&ehdr, sh_type,

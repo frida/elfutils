@@ -48,16 +48,10 @@ AT_comp_dir (compilation directory) attributes inside it.  Caution:
 source files listed in the DWARF may be a path \fIanywhere\fP in the
 file system, and debuginfod will readily serve their content on
 demand.  (Imagine a doctored DWARF file that lists \fI/etc/passwd\fP
-as a source file.)  If this is a concern, audit your binaries with
-tools such as:
+as a source file.)  If this is a concern, audit your binaries:
 
 .SAMPLE
-% eu-readelf -wline BINARY | sed -n '/^Directory.table/,/^File.name.table/p'
-or
-% eu-readelf -wline BINARY | sed -n '/^Directory.table/,/^Line.number/p'
-or even use debuginfod itself:
-% debuginfod -vvv -d :memory: -F BINARY 2>&1 | grep 'recorded.*source'
-^C
+% eu-srcfiles -e BINARY
 .ESAMPLE
 
 If any of the \fB\-R\fP, \fB-U\fP, or \fB-Z\fP options is given, each
@@ -65,12 +59,17 @@ file is scanned as an archive file that may contain ELF/DWARF/source
 files.  Archive files are recognized by extension.  If \-R is given,
 ".rpm" files are scanned; if \-U is given, ".deb" and ".ddeb" files
 are scanned; if \-Z is given, the listed extensions are scanned.
-Because of complications such as DWZ-compressed debuginfo, may require
-\fItwo\fP traversal passes to identify all source code.  Source files
-for RPMs are only served from other RPMs, so the caution for \-F does
-not apply.  Note that due to Debian/Ubuntu packaging policies &
-mechanisms, debuginfod cannot resolve source files for DEB/DDEB at
-all.
+
+Because of complications such as DWZ-compressed debuginfo, it may
+require \fItwo\fP traversal passes to identify all source code.
+Source files for binaries in archives are only served from archives,
+so the caution for \-F does not apply.  If the same source file may be
+found in multiple different archives, a heuristic chooses the one
+closest to the archive holding the debuginfo.  ("closest" means
+"longest common archive name prefix").  Note that due to Debian/Ubuntu
+packaging policies & mechanisms, debuginfod cannot resolve source
+files for DEB/DDEB at all.  Consider using the
+\-\-disable\-source\-scan option.
 
 If no PATH is listed, or none of the scanning options is given, then
 \fBdebuginfod\fP will simply serve content that it accumulated into
@@ -108,8 +107,8 @@ with \fB\%\-Z\ .rpm='(rpm2cpio|zstdcat)<'\fP instead of \fB\-R\fP.
 .TP
 .B "\-U"
 Activate DEB/DDEB patterns in archive scanning.  The default is off.
-Equivalent to \fB\%\-Z\ .deb='dpkg-deb\ \-\-fsys\-tarfile\fP'
-\fB\%\-Z\ .ddeb='dpkg-deb\ \-\-fsys\-tarfile'\fP.
+Equivalent to \fB\%\-Z\ .deb='(bsdtar\ \-O\ \-x\ \-f\ \-\ data.tar\\*)<\fP'
+and same for \fB.ddeb\fP and \fB.ipk\fP.
 
 .TP
 .B "\-d FILE" "\-\-database=FILE"
@@ -134,6 +133,14 @@ service load.  Archive pattern options must still be given, so
 debuginfod can recognize file name extensions for unpacking.
 
 .TP
+.B "\-\-metadata\-maxtime=SECONDS"
+Impose a limit on the runtime of metadata webapi queries.  These
+queries, especially broad "glob" wildcards, can take a large amount of
+time and produce large results.  Public-facing servers may need to
+throttle them.  The default limit is 5 seconds.  Set 0 to disable this
+limit.
+
+.TP
 .B "\-D SQL" "\-\-ddl=SQL"
 Execute given sqlite statement after the database is opened and
 initialized as extra DDL (SQL data definition language).  This may be
@@ -146,6 +153,17 @@ Set the TCP port number (0 < NUM < 65536) on which debuginfod should
 listen, to service HTTP requests.  Both IPv4 and IPV6 sockets are
 opened, if possible.  The webapi is documented below.  The default
 port number is 8002.
+
+.TP
+.B "\-\-listen\-address=ADDR"
+Set the IP address (IPv4/IPv6 address of the system) on which
+debuginfod should listen, to service HTTP requests.
+
+.TP
+.B "\-\-cors"
+Add CORS-related response headers and OPTIONS method processing.
+This allows third-party webapps to query debuginfod data, which may
+or may not be desirable.  Default is no.
 
 .TP
 .B "\-I REGEX"  "\-\-include=REGEX"  "\-X REGEX"  "\-\-exclude=REGEX"
@@ -172,8 +190,12 @@ interrupting a groom pass (if any).
 
 .TP
 .B "\-r"
-Apply the -I and -X during groom cycles, so that files excluded by the regexes are removed from the index. These parameters are in addition to what normally qualifies a file for grooming, not a replacement.
+Apply the -I and -X during groom cycles, so that most content related
+to files excluded by the regexes are removed from the index.  Not all
+content can be practically removed, so eventually a "\-G"
+"maximal-groom" operation may be needed.
 
+.TP
 .B "\-g SECONDS" "\-\-groom\-time=SECONDS"
 Set the groom time for the index database.  This is the amount of time
 the grooming thread will wait after finishing a grooming pass before
@@ -202,8 +224,9 @@ do maximal-grooming.  See also the \fIDATA MANAGEMENT\fP section.
 Set the concurrency limit for the scanning queue threads, which work
 together to process archives & files located by the traversal thread.
 This important for controlling CPU-intensive operations like parsing
-an ELF file and especially decompressing archives.  The default is the
-number of processors on the system; the minimum is 1.
+an ELF file and especially decompressing archives.  The default is
+related to the number of processors on the system and other
+constraints; the minimum is 1.
 
 .TP
 .B "\-C" "\-C=NUM" "\-\-connection\-pool" "\-\-connection\-pool=NUM"
@@ -212,15 +235,13 @@ following table summarizes the interpretaton of this option and its
 optional NUM parameter.
 .TS
 l l.
-no option	clone new thread for every request, no fixed pool
-\-C	use a fixed thread pool sized automatically
+no option, \-C	use a fixed thread pool sized automatically
 \-C=NUM	use a fixed thread pool sized NUM, minimum 2
 .TE
 
-The first mode is useful for friendly bursty traffic.  The second mode
-is a simple and safe configuration based on the number of processors.
-The third mode is suitable for tuned load-limiting configurations
-facing unruly traffic.
+The first mode is a simple and safe configuration related to the
+number of processors and other constraints. The second mode is
+suitable for tuned load-limiting configurations facing unruly traffic.
 
 .TP
 .B "\-L"
@@ -232,34 +253,39 @@ loops in the symbolic directory tree might lead to \fIinfinite
 traversal\fP.
 
 .TP
-.B "\-\-fdcache\-fds=NUM"  "\-\-fdcache\-mbs=MB"  "\-\-fdcache\-prefetch=NUM2"
-Configure limits on a cache that keeps recently extracted files from
-archives.  Up to NUM requested files and up to a total of MB megabytes
-will be kept extracted, in order to avoid having to decompress their
-archives over and over again.  In addition, up to NUM2 other files
-from an archive may be prefetched into the cache before they are even
-requested.  The default NUM, NUM2, and MB values depend on the
-concurrency of the system, and on the available disk space on the
-$TMPDIR or \fB/tmp\fP filesystem.  This is because that is where the
-most recently used extracted files are kept.  Grooming cleans this
-cache.
+.B "\-M LEVELS"  "\-\-max\-depth=LEVELS"
+Limit the depth of directory traversal to \fILEVELS\fP levels
+below the source paths - as in \fIfind\ -maxdepth\fP.
+The default is unlimited depth; minimum is 0.
 
 .TP
-.B "\-\-fdcache\-\-prefetch\-fds=NUM"  "\-\-fdcache\-\-prefetch\-mbs=MB"
-Configure how many file descriptors (fds) and megabytes (mbs) are
-allocated to the prefetch fdcache. If unspecified, values of
-\fB\-\-prefetch\-fds\fP and \fB\-\-prefetch\-mbs\fP depend
-on concurrency of the system and on the available disk space on
-the $TMPDIR. Allocating more to the prefetch cache will improve
-performance in environments where different parts of several large
-archives are being accessed.
+.B "\-\-fdcache\-mbs=MB"
+Configure limits on a cache that keeps recently extracted files from
+archives.  Up to a total of MB megabytes will be kept extracted, in
+order to avoid having to decompress their archives over and over
+again. The default MB values depend on the concurrency of the system,
+and on the available disk space on the $TMPDIR or \fB/tmp\fP
+filesystem.  (This is because that is where the most recently used
+extracted files are kept.)  While previous versions used plain LRU,
+the cache now attempts to preserve more frequently & recently accessed
+files, and especially those that took a long time to extract (e.g.,
+vdso.debug!), and penalizes large / old files.
+
+.TP
+.B "\-\-fdcache\-prefetch=NUM"
+Up to NUM other files from an archive may be prefetched into the
+cache before they are even requested.  If unspecified, these values
+depend on concurrency of the system and on the available disk space on
+the $TMPDIR.  Allocating more will improve performance in environments
+where multiple different parts of several large archives are being
+accessed.
 
 .TP
 .B "\-\-fdcache\-mintmp=NUM"
-Configure a disk space threshold for emergency flushing of the cache.
-The filesystem holding the cache is checked periodically.  If the
-available space falls below the given percentage, the cache is
-flushed, and the fdcache will stay disabled until the next groom
+Configure a disk space threshold for emergency flushing of the caches.
+The filesystem holding the caches is checked periodically.  If the
+available space falls below the given percentage, the caches are
+flushed, and the fdcaches will stay disabled until the next groom
 cycle.  This mechanism, along a few associated /metrics on the webapi,
 are intended to give an operator notice about storage scarcity - which
 can translate to RAM scarcity if the disk happens to be on a RAM
@@ -270,6 +296,37 @@ virtual disk.  The default threshold is 25%.
 Configure limits of X-Forwarded-For hops. if X-Forwarded-For
 exceeds N hops, it will not delegate a local lookup miss to
 upstream debuginfods. The default limit is 8.
+
+.TP
+.B "\-\-disable\-source\-scan"
+Disable scan of the dwarf source info of debuginfo sections.
+If a setup has no access to source code, the source info is not
+required.
+
+.TP
+.B "\-\-scan\-checkpoint=NUM"
+Run a synchronized SQLITE WAL checkpoint operation after every NUM
+completed archive or file scans.  This may slow down parallel scanning
+phase somewhat, but generate much smaller "-wal" temporary files on
+busy servers.  The default is 256.  Disabled if 0.
+
+.TP
+.B "\-\-koji\-sigcache"
+Enable an additional step of RPM path mapping when extracting signatures for use 
+in RPM per-file IMA verification on koji repositories. The signatures are retrieved
+from the Fedora koji sigcache rpm.sig files as opposed to the original RPM header.
+If a signature cannot be found in the sigcache rpm.sig file, the RPM will be
+tried as a fallback.
+
+.TP
+.B "\-\-home\-redirect"
+Allow for redirecting to a custom URL in case client requests the
+document root.
+
+.TP
+.B "\-\-home\-html"
+Allow for serving a custom text/html FILE in case client requests
+the document root.
 
 .TP
 .B "\-v"
@@ -293,11 +350,35 @@ X-DEBUGINFOD-FILE is simply the unescaped filename and
 X-DEBUGINFOD-SIZE is the size of the file. For files found in archives,
 in addition to X-DEBUGINFOD-FILE and X-DEBUGINFOD-SIZE,
 X-DEBUGINFOD-ARCHIVE is added.  X-DEBUGINFOD-ARCHIVE is the name of the
-archive the file was found in.
+archive the file was found in.  X-DEBUGINFOD-IMA-SIGNATURE contains the
+per-file IMA signature as a hexadecimal blob.
 
-There are three requests.  In each case, the buildid is encoded as a
-lowercase hexadecimal string.  For example, for a program \fI/bin/ls\fP,
-look at the ELF note GNU_BUILD_ID:
+.SAMPLE
+% debuginfod-find -v debuginfo /bin/ls |& grep -i x-debuginfo
+x-debuginfod-size: 502024
+x-debuginfod-archive: /mnt/fedora_koji_prod/koji/packages/coreutils/9.3/4.fc39/x86_64/coreutils-debuginfo-9.3-4.fc39.x86_64.rpm
+x-debuginfod-file: /usr/lib/debug/usr/bin/ls-9.3-4.fc39.x86_64.debug
+.ESAMPLE
+
+.TP
+X-DEBUGINFOD-SIZE
+The size of the file, in bytes.  This may differ from the http Content-Length:
+field (if present), due to compression in transit.
+
+.TP
+X-DEBUGINFOD-FILE
+The full path name of the file related to the given buildid.
+
+.TP
+X-DEBUGINFOD-ARCHIVE
+The full path name of the archive that contained the above file, if any.
+
+
+
+
+There are a handful of buildid-related requests.  In each case, the
+buildid is encoded as a lowercase hexadecimal string.  For example,
+for a program \fI/bin/ls\fP, look at the ELF note GNU_BUILD_ID:
 
 .SAMPLE
 % readelf -n /bin/ls | grep -A4 build.id
@@ -357,13 +438,33 @@ Note: the client should %-escape characters in /SOURCE/FILE that are
 not shown as "unreserved" in section 2.3 of RFC3986. Some characters
 that will be escaped include "+", "\\", "$", "!", the 'space' character,
 and ";". RFC3986 includes a more comprehensive list of these characters.
+
+.SS /buildid/\fIBUILDID\fP/section\fI/SECTION\fP
+If the given buildid is known to the server, the server will attempt to
+extract the contents of an ELF/DWARF section named SECTION from the
+debuginfo file matching BUILDID.  If the debuginfo file can't be found
+or the section has type SHT_NOBITS, then the server will attempt to extract
+the section from the executable matching BUILDID.  If the section is
+successfully extracted then this request results in a binary object
+of the section's contents.  Note that this result is the raw binary
+contents of the section, not an ELF file.
+
 .SS /metrics
 
 This endpoint returns a Prometheus formatted text/plain dump of a
 variety of statistics about the operation of the debuginfod server.
 The exact set of metrics and their meanings may change in future
-versions.  Caution: configuration information (path names, versions)
-may be disclosed.
+versions.
+
+.SS /metadata?key=\fIKEY\fP&value=\fIVALUE\fP
+
+This endpoint triggers a search of the files in the index plus any
+upstream federated servers, based on given key and value.  If
+successful, the result is a application/json textual array, listing
+metadata for the matched files.  See \fIdebuginfod-find(1)\fP for
+documentation of the common key/value search parameters, and the
+resulting data schema.
+
 
 .SH DATA MANAGEMENT
 
@@ -456,8 +557,16 @@ a denial-of-service in terms of RAM, CPU, disk I/O, or network I/O.
 If this is a problem, users are advised to install debuginfod with a
 HTTPS reverse-proxy front-end that enforces site policies for
 firewalling, authentication, integrity, authorization, and load
-control.  The \fI/metrics\fP webapi endpoint is probably not
-appropriate for disclosure to the public.
+control.
+
+Front-end proxies may elide sensitive path name components in
+X-DEBUGINFOD-FILE/ARCHIVE response headers.  For example, using Apache
+httpd's \fBmod_headers\fP, you can remove the entire directory name
+prefix:
+
+.SAMPLE
+Header edit x-debuginfod-archive ".*/" ""
+.ESAMPLE
 
 When relaying queries to upstream debuginfods, debuginfod \fBdoes not\fP
 include any particular security features.  It trusts that the binaries
@@ -481,3 +590,4 @@ Default database file.
 .I "debuginfod-find(1)"
 .I "sqlite3(1)"
 .I \%https://prometheus.io/docs/instrumenting/exporters/
+.I \%https://developer.mozilla.org/en-US/docs/Web/HTTP/CORS

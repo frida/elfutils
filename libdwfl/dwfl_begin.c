@@ -50,6 +50,8 @@ dwfl_begin (const Dwfl_Callbacks *callbacks)
       dwfl->offline_next_address = OFFLINE_REDZONE;
     }
 
+  mutex_init (dwfl->debuginfod_lock);
+
   return dwfl;
 }
 INTDEF (dwfl_begin)

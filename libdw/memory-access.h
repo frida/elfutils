@@ -29,11 +29,10 @@
 #ifndef _MEMORY_ACCESS_H
 #define _MEMORY_ACCESS_H 1
 
-#include <byteswap.h>
-#include <endian.h>
 #include <limits.h>
 #include <stdint.h>
 
+#include <system.h>
 
 /* Number decoding macros.  See 7.6 Variable Length Data.  */
 
@@ -65,7 +64,7 @@ __libdw_max_len_sleb128 (const unsigned char *addr, const unsigned char *end)
 #define get_uleb128_step(var, addr, nth)				      \
   do {									      \
     unsigned char __b = *(addr)++;					      \
-    (var) |= (typeof (var)) (__b & 0x7f) << ((nth) * 7);		      \
+    (var) |= (__typeof (var)) (__b & 0x7f) << ((nth) * 7);		      \
     if (likely ((__b & 0x80) == 0))					      \
       return (var);							      \
   } while (0)
@@ -73,13 +72,16 @@ __libdw_max_len_sleb128 (const unsigned char *addr, const unsigned char *end)
 static inline uint64_t
 __libdw_get_uleb128 (const unsigned char **addrp, const unsigned char *end)
 {
+  const size_t max = __libdw_max_len_uleb128 (*addrp, end);
+  if (unlikely (max == 0))
+    return UINT64_MAX;
+
   uint64_t acc = 0;
 
   /* Unroll the first step to help the compiler optimize
      for the common single-byte case.  */
   get_uleb128_step (acc, *addrp, 0);
 
-  const size_t max = __libdw_max_len_uleb128 (*addrp - 1, end);
   for (size_t i = 1; i < max; ++i)
     get_uleb128_step (acc, *addrp, i);
   /* Other implementations set VALUE to UINT_MAX in this
@@ -113,11 +115,11 @@ __libdw_get_uleb128_unchecked (const unsigned char **addrp)
 #define get_sleb128_step(var, addr, nth)				      \
   do {									      \
     unsigned char __b = *(addr)++;					      \
-    (var) |= (typeof (var)) (__b & 0x7f) << ((nth) * 7);		      \
+    (var) |= (__typeof (var)) (__b & 0x7f) << ((nth) * 7);		      \
     if (likely ((__b & 0x80) == 0))					      \
       {									      \
 	if ((__b & 0x40) != 0)						      \
-	  (var) |= - ((typeof (var)) 1 << (((nth) + 1) * 7));		      \
+	  (var) |= - ((__typeof (var)) 1 << (((nth) + 1) * 7));		      \
 	return (var);							      \
       }									      \
   } while (0)
@@ -125,6 +127,10 @@ __libdw_get_uleb128_unchecked (const unsigned char **addrp)
 static inline int64_t
 __libdw_get_sleb128 (const unsigned char **addrp, const unsigned char *end)
 {
+  const size_t max = __libdw_max_len_sleb128 (*addrp, end);
+  if (unlikely (max == 0))
+    return INT64_MAX;
+
   /* Do the work in an unsigned type, but use implementation-defined
      behavior to cast to signed on return.  This avoids some undefined
      behavior when shifting.  */
@@ -134,7 +140,6 @@ __libdw_get_sleb128 (const unsigned char **addrp, const unsigned char *end)
      for the common single-byte case.  */
   get_sleb128_step (acc, *addrp, 0);
 
-  const size_t max = __libdw_max_len_sleb128 (*addrp - 1, end);
   for (size_t i = 1; i < max; ++i)
     get_sleb128_step (acc, *addrp, i);
   if (*addrp == end)
@@ -147,7 +152,7 @@ __libdw_get_sleb128 (const unsigned char **addrp, const unsigned char *end)
     {
       /* We only need the low bit of the final byte, and as it is the
 	 sign bit, we don't need to do anything else here.  */
-      acc |= ((typeof (acc)) b) << 7 * max;
+      acc |= ((__typeof (acc)) b) << 7 * max;
       return acc;
     }
 
@@ -180,7 +185,7 @@ __libdw_get_sleb128_unchecked (const unsigned char **addrp)
     {
       /* We only need the low bit of the final byte, and as it is the
 	 sign bit, we don't need to do anything else here.  */
-      acc |= ((typeof (acc)) b) << 7 * max;
+      acc |= ((__typeof (acc)) b) << 7 * max;
       return acc;
     }
 
@@ -355,10 +360,10 @@ read_8sbyte_unaligned_1 (bool other_byte_order, const void *p)
 static inline int
 file_byte_order (bool other_byte_order)
 {
-#if __BYTE_ORDER == __LITTLE_ENDIAN
-  return other_byte_order ? __BIG_ENDIAN : __LITTLE_ENDIAN;
+#if BYTE_ORDER == LITTLE_ENDIAN
+  return other_byte_order ? BIG_ENDIAN : LITTLE_ENDIAN;
 #else
-  return other_byte_order ? __LITTLE_ENDIAN : __BIG_ENDIAN;
+  return other_byte_order ? LITTLE_ENDIAN : BIG_ENDIAN;
 #endif
 }
 
@@ -372,7 +377,7 @@ read_3ubyte_unaligned (Dwarf *dbg, const unsigned char *p)
   } d;
   bool other_byte_order = dbg->other_byte_order;
 
-  if (file_byte_order (other_byte_order) == __BIG_ENDIAN)
+  if (file_byte_order (other_byte_order) == BIG_ENDIAN)
     {
       d.c[0] = 0x00;
       d.c[1] = p[0];

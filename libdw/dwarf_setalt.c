@@ -32,11 +32,11 @@
 
 #include "libdwP.h"
 
-#include <unistd.h>
-
 void
 dwarf_setalt (Dwarf *main, Dwarf *alt)
 {
+  mutex_lock (main->dwarf_lock);
+
   if (main->alt_fd != -1)
     {
       INTUSE(dwarf_end) (main->alt_dwarf);
@@ -45,5 +45,6 @@ dwarf_setalt (Dwarf *main, Dwarf *alt)
     }
 
   main->alt_dwarf = alt;
+  mutex_unlock (main->dwarf_lock);
 }
 INTDEF (dwarf_setalt)

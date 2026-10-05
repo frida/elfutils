@@ -117,7 +117,7 @@ file -L L/foo
 export DEBUGINFOD_URLS=http://127.0.0.1:$PORT1
 rm -rf $DEBUGINFOD_CACHE_PATH
 testrun ${abs_top_builddir}/debuginfod/debuginfod-find debuginfo $BUILDID && false || true
-rm -f $DEBUGINFOD_CACHE_PATH/$BUILDID/debuginfo # drop 000-perm negative-hit file
+rm -f $DEBUGINFOD_CACHE_PATH/$BUILDID/debuginfo # drop negative-hit file
 export DEBUGINFOD_URLS=http://127.0.0.1:$PORT2
 testrun ${abs_top_builddir}/debuginfod/debuginfod-find debuginfo $BUILDID
 
@@ -125,7 +125,7 @@ testrun ${abs_top_builddir}/debuginfod/debuginfod-find debuginfo $BUILDID
 export DEBUGINFOD_URLS=127.0.0.1:$PORT1
 rm -rf $DEBUGINFOD_CACHE_PATH
 testrun ${abs_top_builddir}/debuginfod/debuginfod-find debuginfo $BUILDID && false || true
-rm -f $DEBUGINFOD_CACHE_PATH/$BUILDID/debuginfo # drop 000-perm negative-hit file
+rm -f $DEBUGINFOD_CACHE_PATH/$BUILDID/debuginfo # drop negative-hit file
 export DEBUGINFOD_URLS=127.0.0.1:$PORT2
 testrun ${abs_top_builddir}/debuginfod/debuginfod-find debuginfo $BUILDID
 # test parallel queries in client
@@ -157,7 +157,9 @@ testrun ${abs_top_builddir}/debuginfod/debuginfod-find debuginfo $BUILDID
 # Use a file that hasn't been previously extracted in to make it
 # likely that even this test debuginfod will experience concurrency
 # and impose some "after-you" delays.
-(for i in `seq 100`; do
+maxreq=$[$(nproc) * 4]
+maxreq=$(( $maxreq > 64 ? 64 : $maxreq ))
+(for i in `seq $maxreq`; do
     curl -s http://127.0.0.1:$PORT1/buildid/87c08d12c78174f1082b7c888b3238219b0eb265/executable >/dev/null &
  done;
  wait)
@@ -167,11 +169,11 @@ curl -s http://127.0.0.1:$PORT1/metrics | grep 'http_responses_after_you.*'
 # waiting.  A few hundred ms is typical on this developer's workstation.
 
 ########################################################################
-# Corrupt the sqlite database and get debuginfod to trip across its errors
-curl -s http://127.0.0.1:$PORT1/metrics | grep 'sqlite3.*reset'
-dd if=/dev/zero of=$DB bs=1 count=1
-
-# trigger some random activity that's Sure to get sqlite3 upset
+# Trigger some some random activity, then trigger a clean shutdown.
+# We used to try to corrupt the database while the debuginfod server
+# was running and check it detected errors, but that was unreliably
+# and slightly dangerous since part of the database was already mapped
+# into memory.
 kill -USR1 $PID1
 wait_ready $PORT1 'thread_work_total{role="traverse"}' 2
 wait_ready $PORT1 'thread_work_pending{role="scan"}' 0
@@ -179,14 +181,15 @@ wait_ready $PORT1 'thread_busy{role="scan"}' 0
 kill -USR2 $PID1
 wait_ready $PORT1 'thread_work_total{role="groom"}' 2
 curl -s http://127.0.0.1:$PORT1/buildid/beefbeefbeefd00dd00d/debuginfo > /dev/null || true
-curl -s http://127.0.0.1:$PORT1/metrics | grep 'error_count.*sqlite'
-# Run the tests again without the servers running. The target file should
-# be found in the cache.
 
 kill -INT $PID1 $PID2
 wait $PID1 $PID2
 PID1=0
 PID2=0
+
+# Run the tests again without the servers running. The target file should
+# be found in the cache.
+
 tempfiles .debuginfod_*
 
 testrun ${abs_builddir}/debuginfod_build_id_find -e F/prog 1

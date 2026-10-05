@@ -277,10 +277,16 @@ EOF
 cat testfile.dynsym.in testfile.symtab.in \
   | testrun_compare ${abs_top_builddir}/src/readelf -s testfilebaztab
 
+cat testfile.dynsym.in testfile.symtab.in \
+  | testrun_compare ${abs_top_builddir}/src/readelf --syms testfilebaztab
+
 # Display just .dynsym
 cat testfile.dynsym.in \
   | testrun_compare ${abs_top_builddir}/src/readelf \
     --symbols=.dynsym testfilebaztab
+cat testfile.dynsym.in \
+  | testrun_compare ${abs_top_builddir}/src/readelf \
+    --syms=.dynsym testfilebaztab
 cat testfile.dynsym.in \
   | testrun_compare ${abs_top_builddir}/src/readelf \
     --dyn-syms testfilebaztab
@@ -388,5 +394,8 @@ Symbol table [27] '.symtab' contains 42 entries:
    40: 000000000040052c     35 FUNC    GLOBAL DEFAULT       13 main
    41: 00000000004003a8      0 FUNC    GLOBAL DEFAULT       11 _init
 EOF
+
+testrun ${abs_top_builddir}/src/readelf --elf-section -sW testfilebaxmin 2>&1 \
+  | grep "WARNING: cannot find section: 'W'" >/dev/null || exit 2
 
 exit 0

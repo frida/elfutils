@@ -1,0 +1,127 @@
+Elfutils Thread Safety
+
+Status: under development and not officially supported.  Enable with configure
+option `--enable-thread-safety`.  If enabled, <elfutils/version.h> will
+define macro _ELFUTILS_THREAD_SAFE to 1, otherwise this macro is not defined.
+
+Experimental support is available for the elf_* and gelf_* interfaces from
+libelf.so as well as the dwarf_* interface from libdw.so.  Thread safety
+support for the dwfl_* interface is under development.  The libasm,
+libdwfl_stacktrace and libdwelf interfaces are not currently supported.
+
+libdebuginfod: A debuginfod_client handle can be used by at most one thread
+at a time.  Distinct client handles may be used concurrently in separate
+threads.
+
+Elfutils library functions called on distinct library handles which share no
+state may be called concurrently in multiple threads.  Handles share state
+if one is derived from another (see "Derived handles" below) either directly
+or transitively.
+
+For cases where a library handle is shared across threads, library functions
+are divided into two thread safety types:  Thread-safe and caller-serialized.
+
+Thread-safe functions may run concurrently across threads even if the handles
+are shared.
+
+A caller-serialized function must not run concurrently with any other library
+function call (whether thread-safe or caller-serialized) on the same handle,
+on any handle derived from it (see below), or on any handle it is derived from.
+The caller is responsible for serializing these function calls.  Ancestor
+handles are not invalidated by caller-serialized functions being called
+on derived handles.
+
+Typical use cases involve a caller-serialized phase where library handles
+are initialized, followed by a concurrent phase where thread-safe library
+functions are freely called across multiple threads.  Once a concurrent
+phase is finished handles can be modified or destroyed in a caller-serialized
+manner.  This phased approach helps avoid the need for locking on the
+caller side.  If caller-side locking is required one can associate a lock
+with the highest handle in the derivation chain (typically an Elf or Dwarf)
+being accessed concurrently.
+
+
+Caller-serialized functions
+
+Currently thread safety is supported for the elf_*, gelf_* and dwarf_*
+interfaces.  The following functions from these interfaces are
+caller-serialized.  All other functions from these interfaces are thread-safe.
+
+  elf_*    elf32_checksum, elf32_newehdr, elf32_newphdr, elf32_xlatetof,
+           elf32_xlatetom, elf64_checksum, elf64_newehdr, elf64_newphdr,
+           elf64_xlatetof, elf64_xlatetom, elf_begin (non-NULL ref),
+           elf_cntl, elf_compress, elf_compress_gnu, elf_end, elf_fill,
+           elf_flagdata, elf_flagehdr, elf_flagelf, elf_flagphdr,
+           elf_flagscn, elf_flagshdr, elf_newdata, elf_newscn, elf_next,
+           elf_rand, elf_update
+
+  gelf_*   gelf_checksum, gelf_newehdr, gelf_newphdr, gelf_update_*,
+           gelf_xlatetof, gelf_xlatetom
+
+  dwarf_*  dwarf_begin_elf, dwarf_cfi_end, dwarf_end, dwarf_new_oom_handler,
+           dwarf_setalt
+
+  dwfl_*   TBD
+
+
+Derived handles
+
+A handle is derived from another when it is obtained from it and shares or
+copies its state.  Concurrency limitations of caller-serialized functions apply
+to both derived handles and ancestor handles.
+
+For example, an Elf_Data is derived from an Elf_Scn and the Elf_Scn is derived
+from an Elf.  In this case the caller must ensure that elf_flagdata is not
+called on the Elf_Data concurrently with either elf_newdata called on its
+associated Elf_Scn or elf_update called on its associated Elf.
+
+After a caller-serialized function runs, handles previously derived from any
+handles used as arguments may be invalid and should be re-derived before
+further use.  Ancestor handles do not need to be re-derived.
+
+Indentation below shows derivation.  ElfXX refers to both Elf32 and Elf64.
+
+libelf:
+  Elf
+    Elf_Scn
+      Elf_Data
+        ElfXX_*         except ElfXX_Ehdr, ElfXX_Phdr and ElfXX_Shdr
+        GElf_*          except GElf_Ehdr, GElf_Phdr and GElf_Shdr
+      ElfXX_Shdr
+      GElf_Shdr
+    ElfXX_Ehdr
+    ElfXX_Phdr
+    GElf_Ehdr
+    GElf_Phdr
+    Elf_Arsym
+    Elf                 archive member, elf_clone
+      Elf_Arhdr
+
+libdw:
+  Dwarf                 derived from the Elf it was opened with
+    Dwarf_CU
+      Dwarf_Die
+        Dwarf_Attribute
+          Dwarf_Op
+          Dwarf_Block
+      Dwarf_Lines
+        Dwarf_Line
+      Dwarf_Files
+      Dwarf_Abbrev
+    Dwarf_Aranges
+      Dwarf_Arange
+    Dwarf_Macro
+      Dwarf_Attribute
+      Dwarf_Files
+    Dwarf_Global
+    Dwarf_CFI
+      Dwarf_Frame
+        Dwarf_Op
+    Dwarf               alternate, split, .dwp
+  Dwarf_CFI             derived from Elf
+    Dwarf_Frame
+      Dwarf_Op
+  Dwarf_CFI_Entry       derived from Elf_Data
+
+libdwfl:
+  TBD

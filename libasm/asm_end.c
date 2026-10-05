@@ -32,16 +32,13 @@
 #endif
 
 #include <assert.h>
-#include <libintl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
 #include <sys/stat.h>
 
 #include <libasmP.h>
 #include <libelf.h>
-#include <system.h>
 
 
 static int
@@ -544,16 +541,18 @@ free_section (AsmScn_t *scnp)
   if (scnp->subnext != NULL)
     free_section (scnp->subnext);
 
+  /* This is a circular single linked list.  */
   struct AsmData *data = scnp->content;
   if (data != NULL)
-    do
-      {
-	oldp = data;
-	data = data->next;
-	free (oldp);
-      }
-    while (oldp != scnp->content);
-
+    {
+      while (data != scnp->content)
+	{
+	  oldp = data;
+	  data = data->next;
+	  free (oldp);
+	}
+      free (scnp->content);
+    }
   free (scnp);
 }
 

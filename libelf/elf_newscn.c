@@ -51,12 +51,12 @@ elf_newscn (Elf *elf)
 
   /* We rely on the prefix of the `elf', `elf32', and `elf64' element
      being the same.  */
-  assert (offsetof (Elf, state.elf.scns_last)
-	  == offsetof (Elf, state.elf32.scns_last));
-  assert (offsetof (Elf, state.elf.scns_last)
-	  == offsetof (Elf, state.elf64.scns_last));
-  assert (offsetof (Elf, state.elf32.scns)
-	  == offsetof (Elf, state.elf64.scns));
+  eu_static_assert (offsetof (Elf, state.elf.scns_last)
+		    == offsetof (Elf, state.elf32.scns_last));
+  eu_static_assert (offsetof (Elf, state.elf.scns_last)
+		    == offsetof (Elf, state.elf64.scns_last));
+  eu_static_assert (offsetof (Elf, state.elf32.scns)
+		    == offsetof (Elf, state.elf64.scns));
 
   rwlock_wrlock (elf->lock);
 
@@ -94,9 +94,9 @@ elf_newscn (Elf *elf)
 	  1
 #endif
 	  )
-      newp = calloc (sizeof (Elf_ScnList)
-		     + ((elf->state.elf.scnincr *= 2)
-			* sizeof (Elf_Scn)), 1);
+      newp = calloc (1, sizeof (Elf_ScnList)
+			+ ((elf->state.elf.scnincr *= 2)
+			   * sizeof (Elf_Scn)));
       if (newp == NULL)
 	{
 	  __libelf_seterrno (ELF_E_NOMEM);

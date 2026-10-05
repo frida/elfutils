@@ -1,6 +1,6 @@
 ## Process this file with automake to create Makefile.in
 ##
-## Copyright (C) 1996-2014, 2016 Red Hat, Inc.
+## Copyright (C) 1996-2014, 2016, 2024-2025 Red Hat, Inc.
 ## This file is part of elfutils.
 ##
 ## This file is free software; you can redistribute it and/or modify
@@ -19,34 +19,70 @@
 include $(top_srcdir)/config/eu.am
 DEFS += $(YYDEBUG) -DDEBUGPRED=@DEBUGPRED@ \
 	-DSRCDIR=\"$(shell cd $(srcdir);pwd)\" -DOBJDIR=\"$(shell pwd)\"
+
+DEFAULT_INCLUDES =
 AM_CPPFLAGS += -I$(srcdir)/../libelf -I$(srcdir)/../libebl \
 	    -I$(srcdir)/../libdw -I$(srcdir)/../libdwelf \
-	    -I$(srcdir)/../libdwfl -I$(srcdir)/../libasm
+	    -I$(srcdir)/../libdwfl -I$(srcdir)/../libdwfl_stacktrace \
+	    -I$(srcdir)/../libasm -I../debuginfod
 
 AM_LDFLAGS = -Wl,-rpath-link,../libelf:../libdw $(STACK_USAGE_NO_ERROR)
 
 bin_PROGRAMS = readelf nm size strip elflint findtextrel addr2line \
 	       elfcmp objdump ranlib strings ar unstrip stack elfcompress \
-	       elfclassify
+	       elfclassify srcfiles
+
+if ENABLE_STACKPROF
+bin_PROGRAMS += stackprof
+endif
 
 noinst_LIBRARIES = libar.a
 
 libar_a_SOURCES = arlib.c arlib2.c arlib-argp.c
 
-EXTRA_DIST = arlib.h debugpred.h
-
 bin_SCRIPTS = make-debug-archive
-EXTRA_DIST += make-debug-archive.in
-CLEANFILES += make-debug-archive
+
+EXTRA_DIST = arlib.h debugpred.h make-debug-archive.in
+
+EXTRA_libar_a_DEPENDENCIES = libar.manifest
+
+libar.manifest: $(libar_a_OBJECTS)
+	$(AM_V_GEN)echo $^ > $@
+
+MOSTLYCLEANFILES = *.gconv
+CLEANFILES = $(bin_SCRIPTS) $(EXTRA_libar_a_DEPENDENCIES)
+
+if USE_LOCKS
+noinst_LIBRARIES += libthread.a
+noinst_HEADERS = threadlib.h
+libthread_a_SOURCES = threadlib.c
+EXTRA_DIST += threadlib.h
+EXTRA_libthread_a_DEPENDENCIES = libthread.manifest
+
+libthread.manifest: $(libthread_a_OBJECTS)
+	$(AM_V_GEN)echo $^ > $@
+
+CLEANFILES += $(EXTRA_libthread_a_DEPENDENCIES)
+endif
 
 if BUILD_STATIC
 libasm = ../libasm/libasm.a
 libdw = ../libdw/libdw.a -lz $(zip_LIBS) $(libelf) -ldl -lpthread
-libelf = ../libelf/libelf.a -lz
+libelf = ../libelf/libelf.a -lz $(zstd_LIBS)
+if LIBDEBUGINFOD
+libdebuginfod = ../debuginfod/libdebuginfod.a -lpthread $(libcurl_LIBS) $(crypto_LIBS) $(jsonc_LIBS)
+else
+libdebuginfod =
+endif
 else
 libasm = ../libasm/libasm.so
 libdw = ../libdw/libdw.so
 libelf = ../libelf/libelf.so
+if LIBDEBUGINFOD
+libdebuginfod = ../debuginfod/libdebuginfod.so
+else
+libdebuginfod =
+endif
 endif
 libebl = ../libebl/libebl.a ../backends/libebl_backends.a ../libcpu/libcpu.a
 libeu = ../lib/libeu.a
@@ -68,6 +104,9 @@ ar_no_Wstack_usage = yes
 unstrip_no_Wstack_usage = yes
 
 readelf_LDADD = $(libdw) $(libebl) $(libelf) $(libeu) $(argp_LDADD)
+if USE_LOCKS
+readelf_LDADD += libthread.a
+endif
 nm_LDADD = $(libdw) $(libebl) $(libelf) $(libeu) $(argp_LDADD) $(obstack_LIBS) \
 	   $(demanglelib)
 size_LDADD = $(libelf) $(libeu) $(argp_LDADD)
@@ -84,6 +123,14 @@ unstrip_LDADD = $(libebl) $(libelf) $(libdw) $(libeu) $(argp_LDADD)
 stack_LDADD = $(libebl) $(libelf) $(libdw) $(libeu) $(argp_LDADD) $(demanglelib)
 elfcompress_LDADD = $(libebl) $(libelf) $(libdw) $(libeu) $(argp_LDADD)
 elfclassify_LDADD = $(libelf) $(libdw) $(libeu) $(argp_LDADD)
+srcfiles_SOURCES = srcfiles.cxx
+srcfiles_LDADD = $(libdw) $(libelf) $(libeu) $(argp_LDADD) $(libarchive_LIBS) $(libdebuginfod)
+if ENABLE_STACKPROF
+stackprof_SOURCES = stackprof.cxx
+stackprof_CPPFLAGS = $(AM_CPPFLAGS) $(jsonc_CFLAGS)
+stackprof_CXXFLAGS = -Wall
+stackprof_LDADD = $(libebl) $(libdw) $(libelf) $(libeu) $(argp_LDADD) $(libpfm_LIBS) $(jsonc_LIBS)
+endif
 
 installcheck-binPROGRAMS: $(bin_PROGRAMS)
 	bad=0; pid=$$$$; list="$(bin_PROGRAMS)"; for p in $$list; do \
@@ -101,7 +148,6 @@ installcheck-binPROGRAMS: $(bin_PROGRAMS)
 	  done; \
 	done; rm -f c$${pid}_.???; exit $$bad
 
-CLEANFILES += *.gconv
 
 make-debug-archive: $(srcdir)/make-debug-archive.in
 	$(AM_V_GEN)UNSTRIP=$(bindir)/`echo unstrip | sed '$(transform)'`; \

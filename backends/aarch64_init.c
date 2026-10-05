@@ -1,5 +1,5 @@
 /* Initialization of AArch64 specific backend library.
-   Copyright (C) 2013, 2017 Red Hat, Inc.
+   Copyright (C) 2013, 2017, 2026 Red Hat, Inc.
    This file is part of elfutils.
 
    This file is free software; you can redistribute it and/or modify
@@ -33,6 +33,7 @@
 #define BACKEND		aarch64_
 #define RELOC_PREFIX	R_AARCH64_
 #include "libebl_CPU.h"
+#include "libebl_PERF_FLAGS.h"
 
 /* This defines the common reloc hooks based on aarch64_reloc.def.  */
 #include "common-reloc.c"
@@ -54,12 +55,19 @@ aarch64_init (Elf *elf __attribute__ ((unused)),
   HOOK (eh, dynamic_tag_check);
   HOOK (eh, data_marker_symbol);
   HOOK (eh, abi_cfi);
+  HOOK (eh, section_type_name);
 
   /* X0-X30 (31 regs) + SP + 1 Reserved + ELR, 30 Reserved regs (34-43)
      + V0-V31 (32 regs, least significant 64 bits only)
      + ALT_FRAME_RETURN_COLUMN (used when LR isn't used) = 97 DWARF regs. */
   eh->frame_nregs = 97;
   HOOK (eh, set_initial_registers_tid);
+  HOOK (eh, set_initial_registers_sample);
+  HOOK (eh, sample_sp_pc);
+  /* sample_perf_regs_mapping is default ver  */
+  eh->perf_frame_regs_mask = PERF_FRAME_REGISTERS_AARCH64
+      | PERF_FRAME_REGISTERS_ARM; /* XXX try to include 32-bit compat mode regs  */
+  __libebl_init_cached_regs_mapping (eh);
   HOOK (eh, unwind);
 
   return eh;

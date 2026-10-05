@@ -251,6 +251,12 @@ print_expr (Dwarf_Attribute *attr, Dwarf_Op *expr, Dwarf_Addr addr, int depth)
       printf ("%s", opname);
       break;
 
+    case DW_OP_GNU_uninit:
+      /* No arguments. Special. It means the expression describes
+	 an value which hasn't been initialized (yet).  */
+      printf ("%s", opname);
+      break;
+
     case DW_OP_call_frame_cfa:
       /* No arguments. Special. Pushes Call Frame Address as computed
 	 by CFI data (dwarf_cfi_addrframe will fetch that info (either from
@@ -1114,7 +1120,7 @@ main (int argc, char *argv[])
 
 	  const char *name = (modname[0] != '\0'
 			      ? modname
-			      :  basename (mainfile));
+			      :  xbasename (mainfile));
 	  printf ("module '%s'\n", name);
 	  print_die (&cudie, "CU", 0);
 

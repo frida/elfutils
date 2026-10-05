@@ -66,7 +66,11 @@ dwarf_getcfi (Dwarf *dbg)
       cfi->default_same_value = false;
 
       cfi->next_offset = 0;
-      cfi->cie_tree = cfi->fde_tree = cfi->expr_tree = NULL;
+
+      eu_search_tree_init (&cfi->cie_tree);
+      eu_search_tree_init (&cfi->fde_tree);
+      eu_search_tree_init (&cfi->expr_tree);
+      mutex_init (cfi->lock);
 
       cfi->ebl = NULL;
 

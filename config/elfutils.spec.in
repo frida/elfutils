@@ -7,6 +7,13 @@ License: GPLv3+ and (GPLv2+ or LGPLv3+) and GFDL
 Source: ftp://sourceware.org/pub/elfutils/%{version}/elfutils-%{version}.tar.bz2
 Summary: A collection of utilities and DSOs to handle ELF files and DWARF data
 
+# eu-stackprof currently only supports x86/ARM
+%ifarch %{ix86} %{x86_64} %{arm} %{arm64}
+%global enable_stackprof 1
+%else
+%global enable_stackprof 0
+%endif
+
 Requires: elfutils-libelf = %{version}-%{release}
 Requires: elfutils-libs = %{version}-%{release}
 # Can be a Recommends if rpm supports that
@@ -31,6 +38,8 @@ BuildRequires: pkgconfig(libmicrohttpd) >= 0.9.33
 BuildRequires: pkgconfig(libcurl) >= 7.29.0
 BuildRequires: pkgconfig(sqlite3) >= 3.7.17
 BuildRequires: pkgconfig(libarchive) >= 3.1.2
+# For debugindod metadata query
+BuildRequires: pkgconfig(json-c) >= 0.11
 
 # For tests need to bunzip2 test files.
 BuildRequires: bzip2
@@ -40,6 +49,21 @@ BuildRequires: iproute
 BuildRequires: procps
 BuildRequires: bsdtar
 BuildRequires: curl
+# For run-debuginfod-response-headers.sh test case
+BuildRequires: socat
+# For run-debuginfod-find-metadata.sh
+BuildRequires: jq
+
+# For debuginfod rpm IMA verification
+BuildRequires: rpm-devel
+BuildRequires: ima-evm-utils-devel
+BuildRequires: openssl-devel
+BuildRequires: rpm-sign
+
+# For eu-stackprof
+%if %{enable_stackprof}
+BuildRequires: libpfm-devel
+%endif
 
 %define _gnu %{nil}
 %define _programprefix eu-
@@ -141,6 +165,9 @@ profiling) of processes.
 %package debuginfod-client
 Summary: Library and command line client for build-id HTTP ELF/DWARF server
 License: GPLv3+ and (GPLv2+ or LGPLv3+)
+# For debuginfod-find binary
+Requires: elfutils-libs = %{version}-%{release}
+Requires: elfutils-libelf = %{version}-%{release}
 
 %package debuginfod-client-devel
 Summary: Libraries and headers to build debuginfod client applications
@@ -182,7 +209,15 @@ such servers to download those files on demand.
 %setup -q
 
 %build
-%configure --program-prefix=%{_programprefix} --enable-debuginfod --enable-debuginfod-urls
+%configure --program-prefix=%{_programprefix} \
+           --enable-debuginfod \
+           --enable-debuginfod-urls=https://debuginfod.elfutils.org/ \
+%if %{enable_stackprof}
+           --enable-stackprof \
+%else
+           --disable-stackprof \
+%endif
+           --enable-debuginfod-ima-verification
 make -s %{?_smp_mflags}
 
 %install
@@ -228,7 +263,7 @@ fi
 
 %files
 %license COPYING COPYING-GPLV2 COPYING-LGPLV3 doc/COPYING-GFDL
-%doc README TODO CONTRIBUTING
+%doc README TODO CONTRIBUTING SECURITY CONDUCT THREAD-SAFETY
 %{_bindir}/eu-addr2line
 %{_bindir}/eu-ar
 %{_bindir}/eu-elfclassify
@@ -242,7 +277,11 @@ fi
 %{_bindir}/eu-ranlib
 %{_bindir}/eu-readelf
 %{_bindir}/eu-size
+%{_bindir}/eu-srcfiles
 %{_bindir}/eu-stack
+%if %{enable_stackprof}
+%{_bindir}/eu-stackprof
+%endif
 %{_bindir}/eu-strings
 %{_bindir}/eu-strip
 %{_bindir}/eu-unstrip
@@ -260,18 +299,19 @@ fi
 %dir %{_includedir}/elfutils
 %{_includedir}/elfutils/elf-knowledge.h
 %{_includedir}/elfutils/known-dwarf.h
-#%{_includedir}/elfutils/libasm.h
+#%%{_includedir}/elfutils/libasm.h
 %{_includedir}/elfutils/libdw.h
 %{_includedir}/elfutils/libdwfl.h
+%{_includedir}/elfutils/libdwfl_stacktrace.h
 %{_includedir}/elfutils/libdwelf.h
 %{_includedir}/elfutils/version.h
-#%{_libdir}/libasm.so
+#%%{_libdir}/libasm.so
 %{_libdir}/libdw.so
 %{_libdir}/pkgconfig/libdw.pc
 
 %files devel-static
 %{_libdir}/libdw.a
-#%{_libdir}/libasm.a
+#%%{_libdir}/libasm.a
 
 %files libelf
 %license COPYING-GPLV2 COPYING-LGPLV3
@@ -286,6 +326,11 @@ fi
 %{_libdir}/libelf.so
 %{_libdir}/pkgconfig/libelf.pc
 %{_mandir}/man3/elf_*.3*
+%{_mandir}/man3/elf32_*.3*
+%{_mandir}/man3/elf64_*.3*
+%{_mandir}/man3/gelf.3*
+%{_mandir}/man3/gelf_*.3*
+%{_mandir}/man3/libelf.3*
 
 %files libelf-devel-static
 %{_libdir}/libelf.a
@@ -301,6 +346,7 @@ fi
 %{_mandir}/man1/debuginfod-find.1*
 %{_mandir}/man7/debuginfod*.7*
 %config(noreplace) %{_sysconfdir}/profile.d/*
+%config(noreplace) %{_datadir}/fish/vendor_conf.d/debuginfod.fish
 %config(noreplace) %{_sysconfdir}/debuginfod/*
   
 %files debuginfod-client-devel
@@ -316,8 +362,7 @@ fi
 %{_bindir}/debuginfod
 %config(noreplace) %{_sysconfdir}/sysconfig/debuginfod
 %{_unitdir}/debuginfod.service
-%{_sysconfdir}/sysconfig/debuginfod
-%{_mandir}/man8/debuginfod.8*
+%{_mandir}/man8/debuginfod*.8*
 %{_mandir}/man7/debuginfod*.7*
 
 %dir %attr(0700,debuginfod,debuginfod) %{_localstatedir}/cache/debuginfod
@@ -337,6 +382,187 @@ exit 0
 %systemd_postun_with_restart debuginfod.service
 
 %changelog
+* Fri Aug 14 2026 Aaron Merey <amerey@redhat.com> 0.196-1
+- debuginfod: The $DEBUGINFOD_TIMEOUT environment variable is now
+  enforced when establishing a connection to a server.
+- libdw: New functions dwarf_begin_type, dwarf_begin_elf_type and
+  dwarf_get_type plus new enum Dwarf_Type.  Used to select between
+  plain DWARF, split DWARF (.dwo/.dwp) and GNU LTO when opening a
+  file.
+- Added support for DWARF5 supplementary files (.debug_sup) and
+  associated DW_FORM_ref_sup4/8 and DW_FORM_strp_sup forms.
+- Added support for split DWARF debug data when contained in the
+  same file as the skeleton.
+- libdwelf: New functions dwelf_dwarf_debug_sup and
+  dwelf_dwarf_debug_dwp for querying .debug_sup and .debug_dwp
+  section data.
+- libdwfl: Now correctly handles Linux kernel module sections that
+  are not present in sysfs.
+- libdwfl_stacktrace: New functions dwflst_arch_from_uname,
+  dwflst_arch_expected_frame_nregs, dwflst_arch_sp_dwarf_reg and
+  dwflst_arch_sp_perf_reg providing per-architecture constants.  The
+  libdwfl_stacktrace interface is experimental and may be subject to
+  API/ABI changes.
+- srcfiles: Now handles CU names and files from split DWARF.
+- stackprof: New profiling tool for collecting systemwide stacktrace
+  profiles.  Replaces the eu-stacktrace tool.  Requires a C++20
+  capable compiler.
+- stacktrace: This experimental tool has been removed and replaced
+  with eu-stackprof.
+- strip: Fixed bug where a section's sh_link or sh_info reference
+  could be missing from the debug file.
+- version.h: New macro _ELFUTILS_THREAD_SAFE added to
+  <elfutils/version.h>.  Defined to 1 when the elfutils libraries are
+  built with thread safety support enabled.  Otherwise it is left
+  undefined.  Thread safety support is experimental and is not yet
+  officially supported.
+
+* Wed Apr 15 2026 Aaron Merey <amerey@redhat.com> 0.195-1
+- CONTRIBUTING: elfutils has adopted a policy on the use of Large
+  Language Models (LLMs).  Contributions containing output generated
+  by LLMs are not currently being accepted.
+- debuginfod: Introduce --home-redirect and --home-html switches
+  allowing for redirecting to custom URL and/or serving a custom
+  html file, if document root is requested.  Related: PR33635.
+- New command line option --max-depth that limits scanner depth.
+- Metadata queries now support lookup by build-id.
+- New function debuginfod_default_progressfn added to libdebuginfod.
+- debuginfod-find: Fixed bug where DEBUGINFOD_PROGRESS environment
+  variable was ignored if debuginfod-find was invoked without -v.
+- elflint: Recognize .debug_*.dwo sections, .relro_padding sections
+  as well as SHT_AARCH64_ATTRIBUTES, SHT_LLVM_LTO and SHT_LLVM_ADDRSIG.
+- Accept R_X86_64_DTPOFF64 in ET_REL files.
+- Add lints for PT_LOAD, PT_INTERP and PT_PHDR segments.
+- libdw: Added language constants for Erlang, Elixir and Gleam.
+- Fixed bug that caused sections in DWARF package files (.dwp) to be
+  missed if section .debug_dwp is present.
+- libdwfl: Improved handling of Linux kernel object files with sh_addr
+  fields set to non-zero.
+- libdwfl_stacktrace: AArch64 and 32-bit ARM support added.  The
+  libdwfl_stacktrace library interface is experimental and may be
+  subject to API/ABI changes.
+- libelf: New man pages for gelf.h functions.
+- Fixed gelf_getmove and gelf_update_move assertion failures caused
+  by incorrect ELFCLASS32/ELFCLASS64 handling.
+- elf_update now correctly handles binaries with 65280+ sections when
+  section zero headers aren't loaded.
+- readelf: Improved support for DWARF Package Files (.dwp) sections.
+- Improved output format for .gcc_except_table.
+- stacktrace: This experimental tool is scheduled to be removed in
+  the next release and replaced with the upcoming eu-stackprof tool.
+
+* Fri Oct 24 2025 Aaron Merey <amerey@redhat.com> 0.194-1
+- debuginfod-find: Fixed caching bug preventing user-cancelled
+  downloads from being re-downloaded at a later time.
+- elfclassify: New options --has-debug-sections and --any-ar-member.
+- elflint: Presence of vendor- and application-specific ELF note types no
+  longer triggers compliance errors.
+- libdwfl_stacktrace: New function dwflst_sample_getframes.  The
+  libdwfl_stacktrace library interface is experimental and may be subject
+  to API/ABI changes.
+- libelf: Manual pages have been added for many libelf library functions.
+  Additional manual pages are planned for future releases.
+- readelf: Up to 13% faster when using the -N option.
+
+* Fri Apr 25 2025 Aaron Merey <amerey@redhat.com> 0.193-1
+- debuginfod: Add CORS (webapp access) support to webapi and --cors 
+  option.
+- Add --listen-address option for binding the HTTP listen socket to a
+  specific IPv4 or IPv6 address.
+- debuginfod client now caches x-debuginfod-* HTTP headers alongside
+  downloaded files.
+- libdw: Add dwarf_language and dwarf_language_lower_bound functions.
+- Improved support for DWARF6 language metadata as well as DWARF language
+  constants for Nim, Dylan, Algol68, V and Mojo.
+- dwarf_srclang is now forward-compatible with DWARF6 language constants.
+- libdwfl_stacktrace: Experimental new library interface for unwinding
+  stack samples into call chains, and tracking and caching Elf data for
+  multiple processes, building on libdwfl.  Initially supports perf_events
+  stack sample data.
+- libelf: elf_scnshndx has been rewritten to be more robust, particularily
+  for ELF files with more than 64K sections.
+- readelf: Improved handling of corrupt ELF data.
+- --section-headers output now includes a "Key to Flags" explaining section
+  flag meanings.
+
+* Fri Oct 18 2024 Aaron Merey <amerey@redhat.com> 0.192-1
+- CONDUCT: A new code of conduct has been adopted.  See the CONDUCT file
+  for more information.
+- debuginfod: Add per-file signature verification for integrity checking,
+  using RPM IMA scheme from Fedora/RHEL.
+- New API for metadata queries: file name -> buildid.
+- Server-side extraction of files from kernel debuginfo packages is
+  significantly faster. Now takes < 0.25 seconds, down from ~50 seconds.
+- libdw: New function dwfl_set_sysroot.
+- stacktrace: Experimental new tool that can process a stream of stack
+  samples from the Sysprof profiler and unwind them into call chains.
+  Enable on x86 with --enable-stacktrace. See README.eu-stacktrace in the
+  development branch for detailed usage instructions:
+  https://sourceware.org/cgit/elfutils/tree/README.eu-stacktrace?h=users/serhei/eu-stacktrace
+
+* Fri Mar  1 2024 Aaron Merey <amerey@redhat.com> 0.191-1
+- dwarf_addrdie now supports binaries lacking a .debug_aranges
+  section.
+- Improved support for DWARF package files.  Add new function
+  dwarf_cu_dwp_section_info.
+- debuginfod: Caching eviction logic improvements to improve retention
+  of small/frequent/slow files such as Fedora's vdso.debug.
+- srcfiles: Can now fetch the source files of a DWARF/ELF file and
+  place them into a zip.
+
+* Fri Nov  3 2023 Mark Wielaard <mark@klomp.org> 0.190-1
+- CONTRIBUTING: Switch from real name policy to known identity policy.
+  Updated ChangeLog policy (no more separate ChangeLog files).
+  There is a SECURITY bug policy now. The default branch is now 'main'.
+- libelf: Add RELR support.
+- libdw: Recognize .debug_[ct]u_index sections.
+- readelf: Support readelf -Ds, --use-dynamic --symbol.
+  Support .gdb_index version 9
+- scrlines: New tool that compiles a list of source files associated
+  with a specified dwarf/elf file.
+- debuginfod: Schema change (reindexing required, sorry!) for a 60%
+  compression in filename representation, which was a large
+  part of the sqlite index; also, more deliberate sqlite
+  -wal management during scanning using the --scan-checkpoint option.
+- backends: Various LoongArch updates.
+
+* Fri Mar  3 2023 Mark Wielaard <mark@klomp.org> 0.189-1
+- configure: eu-nm, eu-addr2line and eu-stack can provide demangled
+  symbols when linked with libstdc++. Use --disable-demangler to disable.
+  A new option --enable-sanitize-memory has been added for msan sanitizer
+  support.
+- libelf: elf_compress now supports ELFCOMPRESS_ZSTD when build
+  against libzstd
+- libdwfl: dwfl_module_return_value_location now returns 0 (no return
+  type) for DIEs that point to a DW_TAG_unspecified_type.
+- elfcompress: -t, --type= now support zstd if libelf has been build
+  with ELFCOMPRESS_ZSTD support.
+- backends: Add support for LoongArch and Synopsys ARCv2 processors.
+
+* Wed Nov  2 2022 Mark Wielaard <mark@klomp.org> 0.188-1
+- readelf: Add -D, --use-dynamic option.
+- debuginfod-client: Add $DEBUGINFOD_HEADERS_FILE setting to supply
+  outgoing HTTP headers.
+  Add new function debuginfod_find_section.
+- debuginfod: Add --disable-source-scan option.
+- libdwfl: Add new function dwfl_get_debuginfod_client.
+  Add new function dwfl_frame_reg.
+  Add new function dwfl_report_offline_memory.
+
+* Mon Apr 25 2022 Mark Wielaard <mark@klomp.org> 0.187-1
+- debuginfod: Support -C option for connection thread pooling.
+- debuginfod-client: Negative cache file are now zero sized instead
+  of no-permission files.
+- addr2line: The -A, --absolute option, which shows file names
+  includingthe full compilation directory is now the
+  default.  To get theold behavior use the new option --relative.
+- readelf, elflint: Recognize FDO Packaging Metadata ELF notes
+- libdw, debuginfo-client: Load libcurl lazily only when files need
+  to be fetched remotely. libcurl is now never loaded when
+  DEBUGINFOD_URLS is unset. And whenDEBUGINFOD_URLS is set,
+  libcurl is only loaded when the debuginfod_begin function is
+  called.
+
 * Wed Nov 10 2021 Mark Wielaard <mark@klomp.org> 0.186-1
 - debuginfod-client: Default $DEBUGINFOD_URLS is computed from
   drop-in files /etc/debuginfod/*.urls rather than

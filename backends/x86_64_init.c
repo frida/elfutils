@@ -1,5 +1,5 @@
 /* Initialization of x86-64 specific backend library.
-   Copyright (C) 2002-2009, 2013, 2018 Red Hat, Inc.
+   Copyright (C) 2002-2009, 2013, 2018, 2025-2026 Red Hat, Inc.
    Copyright (C) H.J. Lu <hjl.tools@gmail.com>, 2015.
    This file is part of elfutils.
    Written by Ulrich Drepper <drepper@redhat.com>, 2002.
@@ -35,6 +35,7 @@
 #define BACKEND		x86_64_
 #define RELOC_PREFIX	R_X86_64_
 #include "libebl_CPU.h"
+#include "libebl_PERF_FLAGS.h"
 
 /* This defines the common reloc hooks based on x86_64_reloc.def.  */
 #include "common-reloc.c"
@@ -62,6 +63,11 @@ x86_64_init (Elf *elf __attribute__ ((unused)),
   /* gcc/config/ #define DWARF_FRAME_REGISTERS.  */
   eh->frame_nregs = 17;
   HOOK (eh, set_initial_registers_tid);
+  /* set_initial_registers_sample is default ver  */
+  HOOK (eh, sample_sp_pc);
+  HOOK (eh, sample_perf_regs_mapping);
+  eh->perf_frame_regs_mask = PERF_FRAME_REGISTERS_X86_64;
+  __libebl_init_cached_regs_mapping (eh);
   HOOK (eh, unwind);
   HOOK (eh, check_reloc_target_type);
 

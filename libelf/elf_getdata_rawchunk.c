@@ -1,5 +1,6 @@
 /* Return converted data from raw chunk of ELF file.
    Copyright (C) 2007, 2014, 2015 Red Hat, Inc.
+   Copyright (C) 2022, 2023 Mark J. Wielaard <mark@klomp.org>
    This file is part of elfutils.
 
    This file is free software; you can redistribute it and/or modify
@@ -32,13 +33,26 @@
 
 #include <assert.h>
 #include <errno.h>
-#include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
 
-#include <system.h>
 #include "libelfP.h"
 #include "common.h"
+#include "eu-search.h"
+
+static int
+chunk_compare (const void *a, const void *b)
+{
+  Elf_Data_Chunk *da = (Elf_Data_Chunk *)a;
+  Elf_Data_Chunk *db = (Elf_Data_Chunk *)b;
+
+  if (da->offset != db->offset)
+    return da->offset - db->offset;
+
+  if (da->data.d.d_size != db->data.d.d_size)
+    return da->data.d.d_size - db->data.d.d_size;
+
+  return da->data.d.d_type - db->data.d.d_type;
+}
 
 Elf_Data *
 elf_getdata_rawchunk (Elf *elf, int64_t offset, size_t size, Elf_Type type)
@@ -73,7 +87,30 @@ elf_getdata_rawchunk (Elf *elf, int64_t offset, size_t size, Elf_Type type)
   int flags = 0;
   Elf_Data *result = NULL;
 
-  rwlock_rdlock (elf->lock);
+  rwlock_wrlock (elf->lock);
+
+  /* Maybe we already got this chunk?  */
+  Elf_Data_Chunk key;
+  key.offset = offset;
+  key.data.d.d_size = size;
+  key.data.d.d_type = type;
+  Elf_Data_Chunk **found
+    = eu_tsearch_nolock (&key, &elf->state.elf.rawchunk_tree, &chunk_compare);
+
+  if (found == NULL)
+    goto nomem;
+
+  /* Existing entry.  */
+  if (*found != &key && *found != NULL)
+    {
+      result = &(*found)->data.d;
+      goto out;
+    }
+
+  /* New entry.  Note that *found will point to the newly inserted
+     (dummy) key.  We'll replace it with a real rawchunk when that is
+     setup.  Make sure to tdelete the dummy key if anything goes
+     wrong.  */
 
   size_t align = __libelf_type_align (elf->class, type);
   if (elf->map_address != NULL)
@@ -99,6 +136,8 @@ elf_getdata_rawchunk (Elf *elf, int64_t offset, size_t size, Elf_Type type)
       if (rawchunk == NULL)
 	{
 	nomem:
+	  eu_tdelete_nolock (&key, &elf->state.elf.rawchunk_tree,
+			     &chunk_compare);
 	  __libelf_seterrno (ELF_E_NOMEM);
 	  goto out;
 	}
@@ -109,6 +148,8 @@ elf_getdata_rawchunk (Elf *elf, int64_t offset, size_t size, Elf_Type type)
 		    != size))
 	{
 	  /* Something went wrong.  */
+	  eu_tdelete_nolock (&key, &elf->state.elf.rawchunk_tree,
+			     &chunk_compare);
 	  free (rawchunk);
 	  __libelf_seterrno (ELF_E_READ_ERROR);
 	  goto out;
@@ -136,6 +177,8 @@ elf_getdata_rawchunk (Elf *elf, int64_t offset, size_t size, Elf_Type type)
 
 	  /* The copy will be appropriately aligned for direct access.  */
 	  memcpy (buffer, rawchunk, size);
+
+	  free (rawchunk);
 	}
     }
   else
@@ -152,6 +195,9 @@ elf_getdata_rawchunk (Elf *elf, int64_t offset, size_t size, Elf_Type type)
 
       /* Call the conversion function.  */
       (*__elf_xfctstom[elf->class - 1][type])(buffer, rawchunk, size, 0);
+
+      if (!flags)
+	free (rawchunk);
     }
 
   /* Allocate the dummy container to point at this buffer.  */
@@ -171,12 +217,9 @@ elf_getdata_rawchunk (Elf *elf, int64_t offset, size_t size, Elf_Type type)
   chunk->data.d.d_type = type;
   chunk->data.d.d_align = align;
   chunk->data.d.d_version = EV_CURRENT;
+  chunk->offset = offset;
 
-  rwlock_unlock (elf->lock);
-  rwlock_wrlock (elf->lock);
-
-  chunk->next = elf->state.elf.rawchunks;
-  elf->state.elf.rawchunks = chunk;
+  *found = chunk;
   result = &chunk->data.d;
 
  out:

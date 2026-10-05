@@ -32,5 +32,10 @@ testrun_on_self_exe ${abs_top_builddir}/src/elfclassify --program
 testrun_on_self_exe ${abs_top_builddir}/src/elfclassify --loadable
 testrun_on_self_exe ${abs_top_builddir}/src/elfclassify --not-shared
 
-testrun ${abs_top_builddir}/src/elfclassify --not-shared $self_test_files_obj
-testrun ${abs_top_builddir}/src/elfclassify --not-executable $self_test_files_obj
+# Check if the object files are actually ELF files (could be bitcode lto)
+if ${abs_top_builddir}/src/elfclassify -v --elf $self_test_files_obj; then
+  testrun ${abs_top_builddir}/src/elfclassify --not-shared $self_test_files_obj
+  testrun ${abs_top_builddir}/src/elfclassify --not-executable $self_test_files_obj
+else
+  echo "*** Skipping testing not ELF files $self_test_files_obj"
+fi

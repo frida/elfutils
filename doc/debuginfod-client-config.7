@@ -13,6 +13,8 @@ Several environment variables and control files control the behaviour of debugin
 .zZ
 .\" The following section (only) gets included into other man pages via .so
 
+The following information is generic.  Some debuginfod clients may
+internally override defaults listed here.
 
 .SH ENVIRONMENT VARIABLES
 .TP
@@ -24,8 +26,35 @@ temporary files.  The default is /tmp.
 .B $DEBUGINFOD_URLS
 This environment variable contains a list of URL prefixes for trusted
 debuginfod instances.  Alternate URL prefixes are separated by space.
-Avoid referential loops that cause a server to contact itself, directly
-or indirectly - the results would be hilarious.
+This environment variable may be set by /etc/profile.d scripts
+reading /etc/debuginfod/*.urls files.
+
+This environment variable can also contain policy defining tags which
+dictate the response policy for verifying per-file IMA signatures in
+RPMs.  As the space seperated list is read left to right, upon
+encountering a tag, subsequent URLs up to the next tag will be handled
+using that specified policy.  All URLs before the first tag will use
+the default policy, \fIima:ignore\fP.  For example:
+
+.in +4n
+.EX
+DEBUGINFOD_URLS="https://foo.com ima:enforcing https://bar.ca http://localhost:8002/ ima:ignore https://baz.org"
+.EE
+.in
+
+Where foo.com and baz.org use the default \fIignore\fP policy and
+bar.ca and localhost use an \fIenforcing\fP policy.  The policy tag 
+may be one of the following:
+.IP
+\fIima:enforcing\fP Every downloaded file requires a valid signature,
+fully protecting integrity.
+.IP
+\fIima:ignore\fP Skips verification altogether, providing no
+protection.
+.IP
+
+Alerts of validation failure will be directed as specified
+in $DEBUGINFOD_VERBOSE.
 
 .TP
 .B $DEBUGINFOD_CACHE_PATH
@@ -56,9 +85,10 @@ within the limit.
 .TP
 .B $DEBUGINFOD_TIMEOUT
 This environment variable governs the download \fIcommencing\fP
-timeout for each debuginfod HTTP connection.  A server that fails to
-provide at least 100K of data within this many seconds is skipped. The
-default is 90 seconds.  (Zero or negative means "no timeout".)
+timeout, in seconds, for each debuginfod HTTP connection. A server is
+skipped if it either fails to establish a connection within the timeout or
+fails to provide at least 100K of data within the timeout. The default is
+90 seconds. (Zero or negative means "no timeout".)
 
 .TP
 .B $DEBUGINFOD_MAXTIME
@@ -74,6 +104,19 @@ download in bytes. This is best used if the user would like to ensure
 only small files are downloaded. A value of 0 causes no consideration
 for size, and the client may attempt to download a file of any size.
 The default is 0 (infinite size).
+
+.TP
+.B $DEBUGINFOD_HEADERS_FILE
+This environment variable points to a file that supplies headers to
+outbound HTTP requests, one per line. The header lines shouldn't end with
+CRLF, unless that's the system newline convention. Whitespace-only lines
+are skipped.
+
+.TP
+.B $DEBUGINFOD_IMA_CERT_PATH
+This environment variable contains a list of absolute directory paths
+holding X.509 certificates for RPM per-file IMA-verification.
+Alternate paths are separated by colons.
 
 .SH CACHE
 
@@ -127,3 +170,11 @@ are short-circuited (returning an immediate failure instead of sending
 a new query to servers).  This accelerates queries that probably would
 still fail.  The default is 600, 10 minutes.  0 means "forget
 immediately".
+
+.TP
+.B metadata_retention_s
+This control file sets how long to remember the results of a metadata
+query.  New queries for the same artifacts within this time window are
+short-circuited (repeating the same results).  This accelerates
+queries that probably would probably have the same results.  The
+default is 3600, 1 hour.  0 means "do not retain".

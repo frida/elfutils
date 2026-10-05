@@ -33,8 +33,6 @@
 
 #include <libelf.h>
 #include <fcntl.h>
-#include <unistd.h>
-#include <sys/mman.h>
 #include <sys/stat.h>
 
 #include "libelfP.h"
@@ -95,35 +93,28 @@ write_file (Elf *elf, int64_t size, int change_bo, size_t shnum)
 	  && (elf->maximum_size == ~((size_t) 0)
 	      || (size_t) size > elf->maximum_size))
 	{
-#if defined(__ANDROID__) && __ANDROID_API__ < 21
-	  /* Frida doesn't need this functionality so we won't bother
-	     porting it. */
-#else
 	  if (unlikely (posix_fallocate (elf->fildes, 0, size) != 0))
 	    if (errno == ENOSPC)
 	      {
 		__libelf_seterrno (ELF_E_WRITE_ERROR);
 		return -1;
 	      }
-#endif
 
-#ifdef HAVE_MREMAP
 	  /* Extend the mmap address if needed.  */
 	  if (elf->cmd == ELF_C_RDWR_MMAP
 	      && (size_t) size > elf->maximum_size)
 	    {
+#ifdef HAVE_MREMAP
 	      if (mremap (elf->map_address, elf->maximum_size,
 			  size, 0) == MAP_FAILED)
+#endif
 		{
 		  __libelf_seterrno (ELF_E_WRITE_ERROR);
 		  return -1;
 		}
 	      elf->maximum_size = size;
 	    }
-#else
-	  /* Frida doesn't need this functionality so we won't bother
-	     porting it. */
-#endif
+
 	}
 
       /* The file is mmaped.  */

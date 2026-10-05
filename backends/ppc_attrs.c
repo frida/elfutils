@@ -52,6 +52,18 @@ ppc_check_object_attribute (Ebl *ebl __attribute__ ((unused)),
 	    "Hard float",
 	    "Soft float",
 	    "Single-precision hard float",
+	    "Hard or soft float (IBM style long doubles)",
+	    "Hard float (IBM style long doubles)",
+	    "Soft float (IBM style long doubles)",
+	    "Single-precision hard float (IBM style long doubles)",
+	    "Hard or soft float (64-bit long doubles)",
+	    "Hard float (64-bit long doubles)",
+	    "Soft float (64-bit long doubles)",
+	    "Single-precision hard float (64-bit long doubles)",
+	    "Hard or soft float (IEEE 128-bit long doubles)",
+	    "Hard float (IEEE 128-bit long doubles)",
+	    "Soft float (IEEE 128-bit long doubles)",
+	    "Single-precision hard float (IEEE 128-bit long doubles)",
 	  };
 	if (value < sizeof fp_kinds / sizeof fp_kinds[0])
 	  *value_name = fp_kinds[value];

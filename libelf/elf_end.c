@@ -1,5 +1,6 @@
 /* Free resources associated with Elf descriptor.
    Copyright (C) 1998,1999,2000,2001,2002,2004,2005,2007,2015,2016 Red Hat, Inc.
+   Copyright (C) 2023 Mark J. Wielaard <mark@klomp.org>
    This file is part of elfutils.
    Written by Ulrich Drepper <drepper@redhat.com>, 1998.
 
@@ -32,12 +33,21 @@
 #endif
 
 #include <assert.h>
+#include <search.h>
 #include <stddef.h>
 #include <stdlib.h>
-#include <sys/mman.h>
 
 #include "libelfP.h"
 
+
+static void
+free_chunk (void *n)
+{
+  Elf_Data_Chunk *rawchunk = (Elf_Data_Chunk *)n;
+  if (rawchunk->dummy_scn.flags & ELF_F_MALLOCED)
+    free (rawchunk->data.d.d_buf);
+  free (rawchunk);
+}
 
 int
 elf_end (Elf *elf)
@@ -72,7 +82,10 @@ elf_end (Elf *elf)
       elf->state.ar.ar_sym = NULL;
 
       if (elf->state.ar.children != NULL)
-	return 0;
+	{
+	  rwlock_unlock(elf->lock);
+	  return 0;
+	}
     }
 
   /* Remove this structure from the children list.  */
@@ -103,6 +116,12 @@ elf_end (Elf *elf)
       rwlock_unlock (parent->lock);
     }
 
+  if (elf->elf_ar_hdr.ar_name != NULL)
+    free (elf->elf_ar_hdr.ar_name);
+
+  if (elf->elf_ar_hdr.ar_rawname != NULL)
+    free (elf->elf_ar_hdr.ar_rawname);
+
   /* This was the last activation.  Free all resources.  */
   switch (elf->kind)
     {
@@ -113,20 +132,14 @@ elf_end (Elf *elf)
 
     case ELF_K_ELF:
       {
-	Elf_Data_Chunk *rawchunks
+	search_tree *rawchunk_tree
 	  = (elf->class == ELFCLASS32
-	     || (offsetof (struct Elf, state.elf32.rawchunks)
-		 == offsetof (struct Elf, state.elf64.rawchunks))
-	     ? elf->state.elf32.rawchunks
-	     : elf->state.elf64.rawchunks);
-	while (rawchunks != NULL)
-	  {
-	    Elf_Data_Chunk *next = rawchunks->next;
-	    if (rawchunks->dummy_scn.flags & ELF_F_MALLOCED)
-	      free (rawchunks->data.d.d_buf);
-	    free (rawchunks);
-	    rawchunks = next;
-	  }
+	     || (offsetof (struct Elf, state.elf32.rawchunk_tree)
+		 == offsetof (struct Elf, state.elf64.rawchunk_tree))
+	     ? &elf->state.elf32.rawchunk_tree
+	     : &elf->state.elf64.rawchunk_tree);
+
+	eu_search_tree_fini (rawchunk_tree, free_chunk);
 
 	Elf_ScnList *list = (elf->class == ELFCLASS32
 			     || (offsetof (struct Elf, state.elf32.scns)
@@ -154,7 +167,10 @@ elf_end (Elf *elf)
 		   rawdata_base.  If it is already used it will be
 		   freed below.  */
 		if (scn->zdata_base != scn->rawdata_base)
-		  free (scn->zdata_base);
+		  {
+		    free (scn->zdata_base);
+		    scn->zdata_base = NULL;
+		  }
 
 		/* If the file has the same byte order and the
 		   architecture doesn't require overly stringent

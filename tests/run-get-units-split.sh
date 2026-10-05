@@ -27,6 +27,11 @@ testfiles testfile_multi_main testfile_multi.dwz
 
 testrun ${abs_builddir}/get-units-split testfile_multi_main
 
+# see run-dwelf-dwarf-debug-sup.sh
+testfiles testfile-dwarf5-ref-sup testfile-dwarf5.sup
+
+testrun ${abs_builddir}/get-units-split testfile-dwarf5-ref-sup
+
 # see tests/run-dwflsyms.sh
 testfiles testfilebazdbgppc64.debug
 
@@ -62,5 +67,23 @@ EOF
 # Self test (Not on obj files since those need relocation first).
 testrun_on_self_exe ${abs_builddir}/get-units-split
 testrun_on_self_lib ${abs_builddir}/get-units-split
+
+# See testfile-dwp.source.
+testfiles testfile-dwp-5 testfile-dwp-5.dwp
+testfiles testfile-dwp-4 testfile-dwp-4.dwp
+testfiles testfile-dwp-4-strict testfile-dwp-4-strict.dwp
+
+for file in testfile-dwp-5 testfile-dwp-4 testfile-dwp-4-strict; do
+	testrun_compare ${abs_builddir}/get-units-split "$file" << EOF
+file: $file
+Got cudie unit_type: 4
+Found a skeleton unit, with split die: foo.cc
+Got cudie unit_type: 4
+Found a skeleton unit, with split die: bar.cc
+Got cudie unit_type: 4
+Found a skeleton unit, with split die: main.cc
+
+EOF
+done
 
 exit 0

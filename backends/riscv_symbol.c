@@ -1,4 +1,5 @@
 /* RISC-V specific symbolic name handling.
+   Copyright (C) 2024 Mark J. Wielaard <mark@klomp.org>
    This file is part of elfutils.
 
    This file is free software; you can redistribute it and/or modify
@@ -104,9 +105,29 @@ riscv_check_special_symbol (Elf *elf, const GElf_Sym *sym,
   /* _GLOBAL_OFFSET_TABLE_ points to the start of the .got section, but it
      is preceded by the .got.plt section in the output .got section.  */
   if (strcmp (name, "_GLOBAL_OFFSET_TABLE_") == 0)
-    return (strcmp (sname, ".got") == 0
-	    && sym->st_value >= destshdr->sh_addr
-	    && sym->st_value < destshdr->sh_addr + destshdr->sh_size);
+    {
+      if (strcmp (sname, ".got") == 0
+	  && sym->st_value >= destshdr->sh_addr
+	  && sym->st_value < destshdr->sh_addr + destshdr->sh_size)
+	return true;
+      else if (strcmp (sname, ".got.plt") == 0)
+	{
+	  /* Find .got section and compare against that.  */
+	  Elf_Scn *scn = NULL;
+	  while ((scn = elf_nextscn (elf, scn)) != NULL)
+	    {
+	      GElf_Shdr shdr_mem;
+	      GElf_Shdr *shdr = gelf_getshdr (scn, &shdr_mem);
+	      if (shdr != NULL)
+		{
+		  sname = elf_strptr (elf, shstrndx, shdr->sh_name);
+		  if (sname != NULL && strcmp (sname, ".got") == 0)
+		    return (sym->st_value >= shdr->sh_addr
+			    && sym->st_value < shdr->sh_addr + shdr->sh_size);
+		}
+	    }
+	}
+    }
 
   /* __global_pointer$ points to the .sdata section with an offset of
      0x800.  It might however fall in the .got section, in which case we
@@ -118,4 +139,49 @@ riscv_check_special_symbol (Elf *elf, const GElf_Sym *sym,
 	    && sym->st_size == 0);
 
   return false;
+}
+
+const char *
+riscv_segment_type_name (int segment, char *buf __attribute__ ((unused)),
+			 size_t len __attribute__ ((unused)))
+{
+  switch (segment)
+    {
+    case PT_RISCV_ATTRIBUTES:
+      return "RISCV_ATTRIBUTES";
+    }
+  return NULL;
+}
+
+/* Return symbolic representation of section type.  */
+const char *
+riscv_section_type_name (int type,
+			 char *buf __attribute__ ((unused)),
+			 size_t len __attribute__ ((unused)))
+{
+  switch (type)
+    {
+    case SHT_RISCV_ATTRIBUTES:
+      return "RISCV_ATTRIBUTES";
+    }
+
+  return NULL;
+}
+
+const char *
+riscv_dynamic_tag_name (int64_t tag, char *buf __attribute__ ((unused)),
+			size_t len __attribute__ ((unused)))
+{
+  switch (tag)
+    {
+    case DT_RISCV_VARIANT_CC:
+      return "RISCV_VARIANT_CC";
+    }
+  return NULL;
+}
+
+bool
+riscv_dynamic_tag_check (int64_t tag)
+{
+  return tag == DT_RISCV_VARIANT_CC;
 }

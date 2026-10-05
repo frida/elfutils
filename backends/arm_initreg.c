@@ -38,7 +38,7 @@
 #endif
 
 #ifdef __aarch64__
-# include <linux/uio.h>
+# include <sys/uio.h>
 # include <sys/user.h>
 # include <sys/ptrace.h>
 /* Deal with old glibc defining user_pt_regs instead of user_regs_struct.  */

@@ -1,5 +1,7 @@
 /* Declarations for common convenience functions.
    Copyright (C) 2006-2011 Red Hat, Inc.
+   Copyright (C) 2022, 2026 Mark J. Wielaard <mark@klomp.org>
+   Copyright (C) 2023 Khem Raj.
    This file is part of elfutils.
 
    This file is free software; you can redistribute it and/or modify
@@ -29,29 +31,34 @@
 #ifndef LIB_SYSTEM_H
 #define LIB_SYSTEM_H	1
 
+/* Prevent double inclusion of config.h, config.h includes eu-config.h.  */
 #ifdef HAVE_CONFIG_H
-#include <config.h>
+#ifndef EU_CONFIG_H
+# include <config.h>
+#endif
 #endif
 
 #include <errno.h>
+#include <fcntl.h>
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
-#include <sys/param.h>
-#ifdef HAVE_ENDIAN_H
-#include <endian.h>
-#endif
-#ifdef HAVE_BYTESWAP_H
-#include <byteswap.h>
-#endif
-#include <unistd.h>
 #include <string.h>
 #include <stdarg.h>
 #include <stdlib.h>
 
-#if defined(__ANDROID__) && __ANDROID_API__ < 23
-extern int error_message_count;
-void error(int status, int errnum, const char *format, ...);
-#elif defined(HAVE_ERROR_H)
+/* System dependent headers */
+#include <byteswap.h>
+#include <endian.h>
+#include <sys/mman.h>
+#include <sys/param.h>
+#include <unistd.h>
+
+#if defined(HAVE_SYS_RANDOM_H)
+#include <sys/random.h>
+#endif
+
+#if defined(HAVE_ERROR_H)
 #include <error.h>
 #elif defined(HAVE_ERR_H)
 extern int error_message_count;
@@ -60,26 +67,21 @@ void error(int status, int errnum, const char *format, ...);
 #error "err.h or error.h must be available"
 #endif
 
-/* The following fallbacks are applicable on QNX, at least SDKs <= 6.5.0. */
-#if !(defined(HAVE_ENDIAN_H) && defined(HAVE_BYTESWAP_H))
-# ifndef __BYTE_ORDER
-#  define __BYTE_ORDER    BYTE_ORDER
-#  define __LITTLE_ENDIAN LITTLE_ENDIAN
-#  define __BIG_ENDIAN    BIG_ENDIAN
-# endif
-# ifndef bswap_16
-#   define bswap_16(n) __builtin_bswap16 (n)
-#   define bswap_32(n) __builtin_bswap32 (n)
-#   define bswap_64(n) __builtin_bswap64 (n)
-# endif
-#endif
+/* error (EXIT_FAILURE, ...) should be noreturn but on some systems it
+   isn't.  This may cause warnings about code that should not be reachable.
+   So have an explicit error_exit wrapper that is noreturn (because it
+   calls exit explicitly).  */
+#define error_exit(errnum,...) do { \
+    error (EXIT_FAILURE,errnum,__VA_ARGS__); \
+    exit (EXIT_FAILURE); \
+  } while (0)
 
-#if __BYTE_ORDER == __LITTLE_ENDIAN
+#if BYTE_ORDER == LITTLE_ENDIAN
 # define LE32(n)	(n)
 # define LE64(n)	(n)
 # define BE32(n)	bswap_32 (n)
 # define BE64(n)	bswap_64 (n)
-#elif __BYTE_ORDER == __BIG_ENDIAN
+#elif BYTE_ORDER == BIG_ENDIAN
 # define BE32(n)	(n)
 # define BE64(n)	(n)
 # define LE32(n)	bswap_32 (n)
@@ -124,6 +126,32 @@ static inline int
 startswith (const char *str, const char *prefix)
 {
   return strncmp (str, prefix, strlen (prefix)) == 0;
+}
+
+/* Return TRUE if STR[FROM] is a valid string with a zero terminator
+   at or before STR[TO - 1].  Note FROM is an index into the STR
+   array, while TO is the maximum size of the STR array.  This
+   function returns FALSE when TO is zero or FROM >= TO.  */
+static inline bool
+validate_str (const char *str, size_t from, size_t to)
+{
+#if HAVE_DECL_MEMRCHR
+  // Check end first, which is likely a zero terminator,
+  // to prevent function call
+  return (to > 0
+	  && (str[to - 1] == '\0'
+	      || (to > from
+		  && memrchr (&str[from], '\0', to - from - 1) != NULL)));
+#else
+  do {
+    if (to <= from)
+      return false;
+
+    to--;
+  } while (str[to]);
+
+  return true;
+#endif
 }
 
 /* A special gettext function we use if the strings are too short.  */
@@ -210,6 +238,25 @@ pread_retry (int fd, void *buf, size_t len, off_t off)
   return recvd;
 }
 
+static inline ssize_t __attribute__ ((unused))
+read_retry (int fd, void *buf, size_t len)
+{
+  ssize_t recvd = 0;
+
+  do
+    {
+      ssize_t ret = TEMP_FAILURE_RETRY (read (fd, ((char *)buf) + recvd,
+					      len - recvd));
+      if (ret <= 0)
+	return ret < 0 ? ret : recvd;
+
+      recvd += ret;
+    }
+  while ((size_t) recvd < len);
+
+  return recvd;
+}
+
 /* The demangler from libstdc++.  */
 extern char *__cxa_demangle (const char *mangled_name, char *output_buffer,
 			     size_t *length, int *status);
@@ -220,5 +267,98 @@ extern char *__cxa_demangle (const char *mangled_name, char *output_buffer,
 #define eu_static_assert(expr)						\
   extern int never_defined_just_used_for_checking[(expr) ? 1 : -1]	\
     __attribute__ ((unused))
+
+/* We really want a basename implementation that doesn't modify the
+   input argument.  Normally you get that from string.h with _GNU_SOURCE
+   define.  But some libc implementations don't define it and other
+   define it, but provide an implementation that still modifies the
+   argument.  So define our own and poison a bare basename symbol.  */
+static inline const char *
+xbasename(const char *s)
+{
+  const char *p = strrchr(s, '/');
+  return p ? p+1 : s;
+}
+#pragma GCC poison basename
+
+/* Get a random uint64_t.  Returns zero on success, minus one on failure.  */
+static inline int
+xrandom64 (uint64_t *r)
+{
+  /* Prefer getentropy if it is available, fallback to getrandom, if
+     both are missing, or if they fail try reading from /dev/urandom.  */
+#if HAVE_DECL_GETENTROPY
+  if (getentropy (r, sizeof (*r)) == 0)
+    return 0;
+#elif HAVE_DECL_GETRANDOM
+  if (TEMP_FAILURE_RETRY (getrandom (r, sizeof (*r), 0)) == sizeof (*r))
+    return 0;
+#endif
+  int fd = open("/dev/urandom", O_RDONLY | O_CLOEXEC);
+  if (fd < 0)
+    return -1;
+  if (read_retry (fd, r, sizeof (uint64_t)) == sizeof (uint64_t))
+    {
+      close (fd);
+      return 0;
+    }
+  int save_errno = errno;
+  close (fd);
+  errno = save_errno;
+  /* We could try some pseudo-random thing with getpid and
+     clock_gettime.  But if even getting something from /dev/urandom
+     fails it seems we tried hard enough already.  */
+  return -1;
+}
+
+/* There is no mkstempat needed for creating a temp file in a specific
+   directory. Needed e.g. in combination with renameat to atomicly
+   replace a file. So define one ourselves. Like mkstemp the template
+   must end in "XXXXXX", which are replaced by an unique filename
+   suffix. The file is created with user read/write permissions only
+   in the given dirfd using openat.
+   https://sourceware.org/bugzilla/show_bug.cgi?id=19866 */
+static inline int
+xmkstempat (int dirfd, char *templ)
+{
+  /* Only use these 64 chars.  */
+  const char chars[] =
+    "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ-_";
+
+  /* Must end in 6X.  */
+  size_t l = strlen (templ);
+  if (l < 6 || memcmp (templ + l - 6, "XXXXXX", 6) != 0)
+    {
+      errno = EINVAL;
+      return -1;
+    }
+
+  int tries = 128; /* Just fail with EEXIST if 128 tries wasn't enough.  */
+  do
+    {
+      uint64_t r; /* We need at least 64^6 == 2^36  */
+      if (xrandom64 (&r) != 0)
+	return -1;
+
+      /* Random chars for the template.  */
+      for (int i = 0; i < 6; i++)
+	{
+	  templ[l - 6 + i] = chars[r % 64];
+	  r /= 64;
+	}
+
+      /* Must be able to open exclusively.  */
+      int fd = openat (dirfd, templ,
+		       O_RDWR | O_CREAT | O_EXCL | O_CLOEXEC,
+		       S_IRUSR | S_IWUSR);
+      if (fd >= 0)
+	return fd;
+
+      tries--;
+    }
+  while (tries > 0 && errno == EEXIST);
+
+  return -1;
+}
 
 #endif /* system.h */

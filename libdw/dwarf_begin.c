@@ -1,5 +1,6 @@
 /* Create descriptor from file descriptor for processing file.
    Copyright (C) 2002, 2003, 2004, 2005 Red Hat, Inc.
+   Copyright (C) 2026 Mark J. Wielaard <mark@klomp.org>
    This file is part of elfutils.
    Written by Ulrich Drepper <drepper@redhat.com>, 2002.
 
@@ -39,7 +40,7 @@
 
 
 Dwarf *
-dwarf_begin (int fd, Dwarf_Cmd cmd)
+dwarf_begin_type (int fd, Dwarf_Cmd cmd, Dwarf_Type type)
 {
   Elf *elf;
   Elf_Cmd elfcmd;
@@ -85,7 +86,7 @@ dwarf_begin (int fd, Dwarf_Cmd cmd)
   else
     {
       /* Do the real work now that we have an ELF descriptor.  */
-      result = INTUSE(dwarf_begin_elf) (elf, cmd, NULL);
+      result = INTUSE(dwarf_begin_elf_type) (elf, cmd, type, NULL);
 
       /* If this failed, free the resources.  */
       if (result == NULL)
@@ -95,5 +96,12 @@ dwarf_begin (int fd, Dwarf_Cmd cmd)
     }
 
   return result;
+}
+INTDEF(dwarf_begin_type)
+
+Dwarf *
+dwarf_begin (int fd, Dwarf_Cmd cmd)
+{
+  return INTUSE(dwarf_begin_type) (fd, cmd, DWARF_T_AUTO);
 }
 INTDEF(dwarf_begin)

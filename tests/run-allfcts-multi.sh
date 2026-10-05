@@ -67,6 +67,13 @@ Warning: no alt file found.
 /tmp/test-offset-loop.c:7:main
 EOF
 
+# See run-dwelf-dwarf-debug-sup.sh
+testfiles testfile-dwarf5-ref-sup testfile-dwarf5.sup
+testrun_compare ${abs_builddir}/allfcts testfile-dwarf5-ref-sup <<\EOF
+/tmp/test-ref-sup.c:13:main
+/tmp/test-ref-sup.c:8:func
+EOF
+
 rm -rf subdir
 
 exit 0

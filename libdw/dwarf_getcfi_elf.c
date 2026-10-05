@@ -281,6 +281,8 @@ getcfi_shdr (Elf *elf, const GElf_Ehdr *ehdr)
 
   if (shstrndx != 0)
     {
+      Elf_Scn *eh_scn = NULL;
+      GElf_Shdr eh_shdr_mem;
       Elf_Scn *hdr_scn = NULL;
       GElf_Addr hdr_vaddr = 0;
       Elf_Scn *scn = NULL;
@@ -295,18 +297,38 @@ getcfi_shdr (Elf *elf, const GElf_Ehdr *ehdr)
 	    continue;
 	  if (!strcmp (name, ".eh_frame_hdr"))
 	    {
-	      hdr_scn = scn;
-	      hdr_vaddr = shdr->sh_addr;
+	      if (shdr->sh_type != SHT_NOBITS)
+		{
+		  hdr_scn = scn;
+		  hdr_vaddr = shdr->sh_addr;
+
+		  if (eh_scn != NULL)
+		    return getcfi_scn_eh_frame (elf, ehdr,
+						eh_scn, &eh_shdr_mem,
+						hdr_scn, hdr_vaddr);
+		}
 	    }
 	  else if (!strcmp (name, ".eh_frame"))
 	    {
 	      if (shdr->sh_type != SHT_NOBITS)
-		return getcfi_scn_eh_frame (elf, ehdr, scn, shdr,
-					    hdr_scn, hdr_vaddr);
-	      else
-		return NULL;
+		{
+		  eh_scn = scn;
+		  eh_shdr_mem = *shdr;
+
+		  if (hdr_scn != NULL)
+		    return getcfi_scn_eh_frame (elf, ehdr,
+						eh_scn, &eh_shdr_mem,
+						hdr_scn, hdr_vaddr);
+		}
 	    }
 	}
+
+      /* .eh_frame without .eh_frame_hdr will be slow, might want to
+	 generate our own search table?  */
+      if (eh_scn != NULL)
+	return getcfi_scn_eh_frame (elf, ehdr,
+				    eh_scn, &eh_shdr_mem,
+				    NULL, 0);
     }
 
   return (void *) -1l;

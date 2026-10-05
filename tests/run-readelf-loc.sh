@@ -926,7 +926,7 @@ DWARF section [28] '.debug_info' at offset 0x330:
            GNU_ranges_base      (sec_offset) 0
  Split compilation unit at offset 0:
  Version: 4, Abbreviation section offset: 0, Address size: 8, Offset size: 4
- Unit type: skeleton (4), Unit id: 0x3d909d7bd0e69c0b
+ Unit type: split_compile (5), Unit id: 0x3d909d7bd0e69c0b
  {     b}  compile_unit         abbrev: 1
            producer             (GNU_str_index) "GNU C17 9.0.0 20180528 (experimental) -mtune=generic -march=x86-64 -gdwarf-4 -gsplit-dwarf -O2"
            language             (data1) C99 (12)

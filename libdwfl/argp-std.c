@@ -34,9 +34,7 @@
 #include <argp.h>
 #include <stdlib.h>
 #include <assert.h>
-#include <libintl.h>
 #include <fcntl.h>
-#include <unistd.h>
 
 
 #define OPT_DEBUGINFO	0x100
@@ -270,6 +268,9 @@ parse_opt (int key, char *arg, struct argp_state *state)
 	    /* Default if no -e, -p, or -k, is "-e a.out".  */
 	    arg = "a.out";
 	    dwfl = INTUSE(dwfl_begin) (&offline_callbacks);
+
+	    if (dwfl != NULL)
+	      dwfl->offline_next_address = 0;
 	    if (INTUSE(dwfl_report_offline) (dwfl, "", arg, -1) == NULL)
 	      return fail (dwfl, -1, arg, state);
 	    opt->dwfl = dwfl;

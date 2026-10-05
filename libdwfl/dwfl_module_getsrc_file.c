@@ -31,7 +31,7 @@
 #endif
 
 #include "libdwflP.h"
-#include "../libdw/libdwP.h"
+#include "libdwP.h"
 
 
 static inline const char *
@@ -103,7 +103,7 @@ dwfl_module_getsrc_file (Dwfl_Module *mod,
 		{
 		  /* Match the name with the name the user provided.  */
 		  lastfile = file;
-		  lastmatch = !strcmp (is_basename ? basename (file) : file,
+		  lastmatch = !strcmp (is_basename ? xbasename (file) : file,
 				       fname);
 		}
 	    }

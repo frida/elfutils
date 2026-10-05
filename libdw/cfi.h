@@ -90,13 +90,17 @@ struct Dwarf_CFI_s
   Dwarf_Off next_offset;
 
   /* Search tree for the CIEs, indexed by CIE_pointer (section offset).  */
-  void *cie_tree;
+  search_tree cie_tree;
 
   /* Search tree for the FDEs, indexed by PC address.  */
-  void *fde_tree;
+  search_tree fde_tree;
 
   /* Search tree for parsed DWARF expressions, indexed by raw pointer.  */
-  void *expr_tree;
+  search_tree expr_tree;
+
+  /* Should be held when calling __libdw_find_fde, __libdw_fde_by_offset and
+     when __libdw_intern_expression is called with Dwarf_CFI members.  */
+  mutex_define(, lock);
 
   /* Backend hook.  */
   struct ebl *ebl;
@@ -209,11 +213,6 @@ extern struct dwarf_fde *__libdw_find_fde (Dwarf_CFI *cache,
 					   Dwarf_Addr address)
   __nonnull_attribute__ (1) internal_function;
 
-/* Look for an FDE by its offset in the section.  */
-extern struct dwarf_fde *__libdw_fde_by_offset (Dwarf_CFI *cache,
-						Dwarf_Off offset)
-  __nonnull_attribute__ (1) internal_function;
-
 /* Process the FDE that contains the given PC address,
    to yield the frame state when stopped there.
    The return value is a DWARF_E_* error code.  */
@@ -228,6 +227,11 @@ extern int __libdw_frame_at_address (Dwarf_CFI *cache, struct dwarf_fde *fde,
     { ((BYTE_ORDER == LITTLE_ENDIAN && e_ident[EI_DATA] == ELFDATA2MSB)       \
        || (BYTE_ORDER == BIG_ENDIAN && e_ident[EI_DATA] == ELFDATA2LSB)) }
 
+/* AARCH64 DWARF registers. */
+enum
+  {
+    DW_AARCH64_RA_SIGN_STATE = 34
+  };
 
 INTDECL (dwarf_next_cfi)
 INTDECL (dwarf_getcfi)

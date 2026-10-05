@@ -1,5 +1,6 @@
 /* Pedantic checking of ELF files compliance with gABI/psABI spec.
    Copyright (C) 2001-2015, 2017, 2018 Red Hat, Inc.
+   Copyright (C) 2023 Mark J. Wielaard <mark@klomp.org>
    This file is part of elfutils.
    Written by Ulrich Drepper <drepper@redhat.com>, 2001.
 
@@ -27,7 +28,6 @@
 #include <fcntl.h>
 #include <gelf.h>
 #include <inttypes.h>
-#include <libintl.h>
 #include <locale.h>
 #include <stdbool.h>
 #include <stdlib.h>
@@ -252,6 +252,10 @@ process_file (int fd, Elf *elf, const char *prefix, const char *suffix,
 	char new_suffix[(suffix == NULL ? 0 : strlen (suffix)) + 2];
 	char *cp = new_prefix;
 
+	/* Either both prefix and suffix are NULL or both are non-NULL.  */
+	assert ((prefix == NULL && suffix == NULL)
+		|| (prefix != NULL && suffix != NULL));
+
 	/* Create the full name of the file.  */
 	if (prefix != NULL)
 	  {
@@ -330,7 +334,8 @@ static const int valid_e_machine[] =
     EM_CRIS, EM_JAVELIN, EM_FIREPATH, EM_ZSP, EM_MMIX, EM_HUANY, EM_PRISM,
     EM_AVR, EM_FR30, EM_D10V, EM_D30V, EM_V850, EM_M32R, EM_MN10300,
     EM_MN10200, EM_PJ, EM_OPENRISC, EM_ARC_A5, EM_XTENSA, EM_ALPHA,
-    EM_TILEGX, EM_TILEPRO, EM_AARCH64, EM_BPF, EM_RISCV, EM_CSKY
+    EM_TILEGX, EM_TILEPRO, EM_AARCH64, EM_BPF, EM_RISCV, EM_CSKY, EM_LOONGARCH,
+    EM_ARCV2, EM_QDSP6
   };
 #define nvalid_e_machine \
   (sizeof (valid_e_machine) / sizeof (valid_e_machine[0]))
@@ -1291,10 +1296,20 @@ section [%2d] '%s': no relocations for merge-able string sections possible\n"),
 
   size_t sh_entsize = gelf_fsize (ebl->elf, reltype, 1, EV_CURRENT);
   if (shdr->sh_entsize != sh_entsize)
-    ERROR (_(reltype == ELF_T_RELA ? "\
-section [%2d] '%s': section entry size does not match ElfXX_Rela\n" : "\
-section [%2d] '%s': section entry size does not match ElfXX_Rel\n"),
-	   idx, section_name (ebl, idx));
+    {
+      if (reltype == ELF_T_RELA)
+	ERROR ("\
+section [%2d] '%s': section entry size does not match ElfXX_Rela\n",
+	       idx, section_name (ebl, idx));
+      else if (reltype == ELF_T_REL)
+	ERROR ("\
+section [%2d] '%s': section entry size does not match ElfXX_Rel\n",
+	       idx, section_name (ebl, idx));
+      else
+	ERROR ("\
+section [%2d] '%s': section entry size does not match ElfXX_Relr\n",
+	       idx, section_name (ebl, idx));
+    }
 
   /* In preparation of checking whether relocations are text
      relocations or not we need to determine whether the file is
@@ -1590,6 +1605,32 @@ section [%2d] '%s': cannot get relocation %zu: %s\n"),
     }
 }
 
+static void
+check_relr (Ebl *ebl, GElf_Ehdr *ehdr, GElf_Shdr *shdr, int idx)
+{
+  Elf_Data *data = elf_getdata (elf_getscn (ebl->elf, idx), NULL);
+  if (data == NULL)
+    {
+      ERROR (_("section [%2d] '%s': cannot get section data\n"),
+	     idx, section_name (ebl, idx));
+      return;
+    }
+
+  /* Check the fields of the section header.  */
+  GElf_Shdr destshdr_mem;
+  GElf_Shdr *destshdr = NULL;
+  struct loaded_segment *loaded = NULL;
+  check_reloc_shdr (ebl, ehdr, shdr, idx, ELF_T_RELR, &destshdr,
+		    &destshdr_mem, &loaded);
+
+  /* Just throw them away.  */
+  while (loaded != NULL)
+    {
+      struct loaded_segment *old = loaded;
+      loaded = loaded->next;
+      free (old);
+    }
+}
 
 /* Number of dynamic sections.  */
 static int ndynamic;
@@ -1780,6 +1821,7 @@ section [%2d] '%s': entry %zu: pointer does not match address of section [%2d] '
 	case DT_PLTGOT:
 	case DT_REL:
 	case DT_RELA:
+	case DT_RELR:
 	case DT_SYMBOLIC:
 	case DT_SYMTAB:
 	case DT_VERDEF:
@@ -2255,6 +2297,7 @@ section [%2d] '%s': hash value for symbol %u in chain for bucket %zu wrong\n"),
 section [%2d] '%s': mask index for symbol %u in chain for bucket %zu wrong\n"),
 			     idx, section_name (ebl, idx), symidx,
 			     cnt - (4 + bitmask_words));
+		      free (collected.p32);
 		      return;
 		    }
 		  if (classbits == 32)
@@ -3569,9 +3612,12 @@ section [%2d] '%s': offset %zu: attribute subsection has unexpected tag %u\n"),
 		    const unsigned char *r = chunk;
 		    if (tag == 32 || (tag & 1) == 0)
 		      {
+			if (r >= q)
+			  goto invalid_uleb;
 			get_uleb128 (value, r, q);
 			if (r > q)
 			  {
+			  invalid_uleb:
 			    ERROR (_("\
 section [%2d] '%s': offset %zu: endless ULEB128 in attribute tag\n"),
 				   idx, section_name (ebl, idx), buffer_pos (data, chunk));
@@ -3640,6 +3686,7 @@ static const struct
     { ".data", 6, SHT_PROGBITS, exact, SHF_ALLOC | SHF_WRITE, 0 },
     { ".data1", 7, SHT_PROGBITS, exact, SHF_ALLOC | SHF_WRITE, 0 },
     { ".debug_str", 11, SHT_PROGBITS, exact_or_gnuld, SHF_MERGE | SHF_STRINGS, 0 },
+    { ".debug_str.dwo", 15, SHT_PROGBITS, exact_or_gnuld, SHF_MERGE | SHF_STRINGS, 0 },
     { ".debug_line_str", 16, SHT_PROGBITS, exact_or_gnuld, SHF_MERGE | SHF_STRINGS, 0 },
     { ".debug", 6, SHT_PROGBITS, exact, 0, 0 },
     { ".dynamic", 9, SHT_DYNAMIC, atleast, SHF_ALLOC, SHF_WRITE },
@@ -3657,6 +3704,11 @@ static const struct
     { ".plt", 5, SHT_PROGBITS, unused, 0, 0 }, // XXX more tests
     { ".preinit_array", 15, SHT_PREINIT_ARRAY, exact, SHF_ALLOC | SHF_WRITE, 0 },
     { ".rela", 5, SHT_RELA, atleast, 0, SHF_ALLOC | SHF_INFO_LINK }, // XXX more tests
+
+    /* lld extension.  Added before relr so it doesn't match that entry.  */
+    { ".relro_padding", 15, SHT_NOBITS, exact, SHF_ALLOC | SHF_WRITE, 0 },
+
+    { ".relr", 5, SHT_RELR, atleast, 0, SHF_ALLOC }, // XXX more tests
     { ".rel", 4, SHT_REL, atleast, 0, SHF_ALLOC | SHF_INFO_LINK }, // XXX more tests
     { ".rodata", 8, SHT_PROGBITS, atleast, SHF_ALLOC, SHF_MERGE | SHF_STRINGS },
     { ".rodata1", 9, SHT_PROGBITS, atleast, SHF_ALLOC, SHF_MERGE | SHF_STRINGS },
@@ -3682,6 +3734,10 @@ static const struct
   (special_sections[idx].namelen == sizeof string - (prefix ? 1 : 0)  \
    && !memcmp (special_sections[idx].name, string, \
 	       sizeof string - (prefix ? 1 : 0)))
+
+#define IS_DEBUG_DWO(name) \
+  (startswith (name, ".debug_") \
+   && strcmp (name + strlen (name) - 4, ".dwo") == 0)
 
 /* Extra section flags that might or might not be added to the section
    and have to be ignored.  */
@@ -3805,10 +3861,14 @@ section [%2d] '%s' has wrong type: expected %s, is %s\n"),
 		if (special_sections[s].attrflag == exact
 		    || special_sections[s].attrflag == exact_or_gnuld)
 		  {
-		    /* Except for the link order, retain, group bit and
-		       compression flag all the other bits should
-		       match exactly.  */
-		    if ((shdr->sh_flags & ~EXTRA_SHFLAGS)
+		    /* Except for the link order, retain, group bit
+		       and compression flag all the other bits should
+		       match exactly.  .debug.dwo sections can also be
+		       SHF_EXCLUDE. */
+		    GElf_Word extra_shflags = EXTRA_SHFLAGS;
+		    if (IS_DEBUG_DWO (scnname))
+			extra_shflags |= SHF_EXCLUDE;
+		    if ((shdr->sh_flags & ~extra_shflags)
 			!= special_sections[s].attr
 			&& (special_sections[s].attrflag == exact || !gnuld))
 		      ERROR (_("\
@@ -4179,6 +4239,10 @@ section [%2zu] '%s': relocatable files cannot have dynamic symbol tables\n"),
 	  check_rel (ebl, ehdr, shdr, cnt);
 	  break;
 
+	case SHT_RELR:
+	  check_relr (ebl, ehdr, shdr, cnt);
+	  break;
+
 	case SHT_DYNAMIC:
 	  check_dynamic (ebl, ehdr, shdr, cnt);
 	  break;
@@ -4317,41 +4381,47 @@ check_note_data (Ebl *ebl, const GElf_Ehdr *ehdr,
     {
       last_offset = offset;
 
-      /* Make sure it is one of the note types we know about.  */
-      if (ehdr->e_type == ET_CORE)
-	switch (nhdr.n_type)
-	  {
-	  case NT_PRSTATUS:
-	  case NT_FPREGSET:
-	  case NT_PRPSINFO:
-	  case NT_TASKSTRUCT:		/* NT_PRXREG on Solaris.  */
-	  case NT_PLATFORM:
-	  case NT_AUXV:
-	  case NT_GWINDOWS:
-	  case NT_ASRS:
-	  case NT_PSTATUS:
-	  case NT_PSINFO:
-	  case NT_PRCRED:
-	  case NT_UTSNAME:
-	  case NT_LWPSTATUS:
-	  case NT_LWPSINFO:
-	  case NT_PRFPXREG:
-	    /* Known type.  */
-	    break;
+      /* gelf_getnote verified that this note is aligned and does not extend
+	 outside of DATA.  Now check that the note name is null-terminated
+	 if present.  */
+      if (name_offset != 0
+	  && nhdr.n_namesz > 0
+	  && *((char *) data->d_buf + name_offset + nhdr.n_namesz - 1) != '\0')
+	{
+	  if (ehdr->e_type == ET_CORE)
+	    {
+	      if (shndx == 0)
+		ERROR (_("\
+phdr[%d]: name missing null terminator for core file note with type %" PRIu32
+			    " at offset %" PRIu64 "\n"),
+		       phndx, (uint32_t) nhdr.n_type, start + offset);
+	      else
+		ERROR (_("\
+section [%2d] '%s': name missing null terminator for core file note with "
+			    "type %" PRIu32 " at offset %zu\n"),
+		       shndx, section_name (ebl, shndx),
+		       (uint32_t) nhdr.n_type, offset);
+	    }
+	  else
+	    {
+	      if (shndx == 0)
+		ERROR (_("\
+phdr[%d]: name missing null terminator for object file note with type %" PRIu32
+			    " at offset %zu\n"),
+		       phndx, (uint32_t) nhdr.n_type, offset);
+	      else
+		ERROR (_("\
+section [%2d] '%s': name missing null terminator for object file note with "
+			    "type %" PRIu32 " at offset %zu\n"),
+		       shndx, section_name (ebl, shndx),
+		       (uint32_t) nhdr.n_type, offset);
+	    }
 
-	  default:
-	    if (shndx == 0)
-	      ERROR (_("\
-phdr[%d]: unknown core file note type %" PRIu32 " at offset %" PRIu64 "\n"),
-		     phndx, (uint32_t) nhdr.n_type, start + offset);
-	    else
-	      ERROR (_("\
-section [%2d] '%s': unknown core file note type %" PRIu32
-			      " at offset %zu\n"),
-		     shndx, section_name (ebl, shndx),
-		     (uint32_t) nhdr.n_type, offset);
-	  }
-      else
+	  continue;
+	}
+
+      /* Perform type-specific checks.  */
+      if (ehdr->e_type != ET_CORE)
 	switch (nhdr.n_type)
 	  {
 	  case NT_GNU_ABI_TAG:
@@ -4361,15 +4431,15 @@ section [%2d] '%s': unknown core file note type %" PRIu32
 	  case NT_GNU_PROPERTY_TYPE_0:
 	    if (nhdr.n_namesz == sizeof ELF_NOTE_GNU
 		&& strcmp (data->d_buf + name_offset, ELF_NOTE_GNU) == 0)
-	      break;
+	      continue;
 	    else
 	      {
 		/* NT_VERSION is 1, same as NT_GNU_ABI_TAG.  It has no
 		   descriptor and (ab)uses the name as version string.  */
 		if (nhdr.n_descsz == 0 && nhdr.n_type == NT_VERSION)
-		  break;
+		  continue;
 	      }
-	      goto unknown_note;
+	      goto malformed_note;
 
 	  case NT_GNU_BUILD_ATTRIBUTE_OPEN:
 	  case NT_GNU_BUILD_ATTRIBUTE_FUNC:
@@ -4380,32 +4450,43 @@ section [%2d] '%s': unknown core file note type %" PRIu32
 		&& strncmp (data->d_buf + name_offset,
 			    ELF_NOTE_GNU_BUILD_ATTRIBUTE_PREFIX,
 			    strlen (ELF_NOTE_GNU_BUILD_ATTRIBUTE_PREFIX)) == 0)
-	      break;
+	      continue;
 	    else
-	      goto unknown_note;
+	      goto malformed_note;
+
+	  case NT_FDO_PACKAGING_METADATA:
+	    if (nhdr.n_namesz == sizeof ELF_NOTE_FDO
+		&& strcmp (data->d_buf + name_offset, ELF_NOTE_FDO) == 0)
+	      continue;
+	    else
+	      goto malformed_note;
 
 	  case 0:
 	    /* Linux vDSOs use a type 0 note for the kernel version word.  */
 	    if (nhdr.n_namesz == sizeof "Linux"
 		&& !memcmp (data->d_buf + name_offset, "Linux", sizeof "Linux"))
-	      break;
-	    FALLTHROUGH;
+	      continue;
+	    else
+	      goto malformed_note;
 	  default:
-	    {
-	    unknown_note:
+	    /* n_type not recognized, but no errors found regarding alignment,
+	       overflow or name null terminator.  */
+	    continue;
+
+malformed_note:
 	    if (shndx == 0)
 	      ERROR (_("\
-phdr[%d]: unknown object file note type %" PRIu32 " with owner name '%s' at offset %zu\n"),
+phdr[%d]: malformed object file note type %" PRIu32 " with owner name '%s' "
+			      "at offset %zu\n"),
 		     phndx, (uint32_t) nhdr.n_type,
 		     (char *) data->d_buf + name_offset, offset);
 	    else
 	      ERROR (_("\
-section [%2d] '%s': unknown object file note type %" PRIu32
+section [%2d] '%s': malformed object file note type %" PRIu32
 			      " with owner name '%s' at offset %zu\n"),
 		     shndx, section_name (ebl, shndx),
 		     (uint32_t) nhdr.n_type,
 		     (char *) data->d_buf + name_offset, offset);
-	    }
 	  }
     }
 
@@ -4496,6 +4577,9 @@ only executables, shared objects, and core files can have program headers\n"));
   int num_pt_interp = 0;
   int num_pt_tls = 0;
   int num_pt_relro = 0;
+  int num_pt_phdr = 0;
+  size_t prev_pt_load_vaddr = 0;
+  bool pt_load_sorted = true;
 
   for (unsigned int cnt = 0; cnt < phnum; ++cnt)
     {
@@ -4520,7 +4604,17 @@ program header entry %d: unknown program header entry type %#" PRIx64 "\n"),
 	       cnt, (uint64_t) phdr->p_type);
 
       if (phdr->p_type == PT_LOAD)
-	has_loadable_segment = true;
+	{
+	  if (has_loadable_segment && pt_load_sorted
+	      && prev_pt_load_vaddr >= phdr->p_vaddr)
+	    {
+	      ERROR (_("LOAD segments not sorted by vaddr\n"));
+	      pt_load_sorted = false;
+	    }
+	  else
+	    prev_pt_load_vaddr = phdr->p_vaddr;
+	  has_loadable_segment = true;
+        }
       else if (phdr->p_type == PT_INTERP)
 	{
 	  if (++num_pt_interp != 1)
@@ -4529,6 +4623,9 @@ program header entry %d: unknown program header entry type %#" PRIx64 "\n"),
 		ERROR (_("\
 more than one INTERP entry in program header\n"));
 	    }
+	  else if (has_loadable_segment)
+	    ERROR (_("\
+INTERP entry is preceded by a loadable segment in program header\n"));
 	  has_interp_segment = true;
 	}
       else if (phdr->p_type == PT_TLS)
@@ -4622,7 +4719,13 @@ GNU_RELRO [%u] flags are not a subset of the loadable segment [%u] flags\n"),
 	}
       else if (phdr->p_type == PT_PHDR)
 	{
-	  /* Check that the region is in a writable segment.  */
+	  if (++num_pt_phdr != 1)
+	    {
+	      if (num_pt_phdr == 2)
+		ERROR (_("\
+more than one PHDR entry in program header\n"));
+	    }
+	  /* Check that the region is in a loaded segment.  */
 	  unsigned int inner;
 	  for (inner = 0; inner < phnum; ++inner)
 	    {
@@ -4724,7 +4827,10 @@ section [%2zu] '%s' must not be executable\n"),
 	}
 
       if (phdr->p_filesz > phdr->p_memsz
-	  && (phdr->p_memsz != 0 || phdr->p_type != PT_NOTE))
+	  && (phdr->p_memsz != 0
+	      || (phdr->p_type != PT_NOTE
+		  && !(ehdr->e_machine == EM_RISCV
+		       && phdr->p_type == PT_RISCV_ATTRIBUTES))))
 	ERROR (_("\
 program header entry %d: file size greater than memory size\n"),
 	       cnt);

@@ -1,6 +1,6 @@
 ## Process this file with automake to create Makefile.in
 ##
-## Copyright (C) 2002-2010, 2012, 2014, 2016, 2018 Red Hat, Inc.
+## Copyright (C) 2002-2010, 2012, 2014, 2016, 2018, 2025 Red Hat, Inc.
 ## This file is part of elfutils.
 ##
 ## This file is free software; you can redistribute it and/or modify
@@ -31,7 +31,7 @@ include $(top_srcdir)/config/eu.am
 if BUILD_STATIC
 AM_CFLAGS += $(fpic_CFLAGS)
 endif
-AM_CPPFLAGS += -I$(srcdir)/../libelf -I$(srcdir)/../libdwelf -pthread
+AM_CPPFLAGS += -I$(srcdir)/../libebl -I$(srcdir)/../libelf -I$(srcdir)/../libdwelf -pthread
 VERSION = 1
 
 lib_LIBRARIES = libdw.a
@@ -93,28 +93,28 @@ libdw_a_SOURCES = dwarf_begin.c dwarf_begin_elf.c dwarf_end.c dwarf_getelf.c \
 		  dwarf_cu_die.c dwarf_peel_type.c dwarf_default_lower_bound.c \
 		  dwarf_die_addr_die.c dwarf_get_units.c \
 		  libdw_find_split_unit.c dwarf_cu_info.c \
-		  dwarf_next_lines.c
+		  dwarf_next_lines.c dwarf_cu_dwp_section_info.c
 
 if MAINTAINER_MODE
 BUILT_SOURCES = $(srcdir)/known-dwarf.h
-MAINTAINERCLEANFILES = $(srcdir)/known-dwarf.h
 $(srcdir)/known-dwarf.h: $(top_srcdir)/config/known-dwarf.awk $(srcdir)/dwarf.h
 	gawk -f $^ > $@.new
 	mv -f $@.new $@
 endif
 
 libdw_pic_a_SOURCES =
-am_libdw_pic_a_OBJECTS = $(libdw_a_SOURCES:.c=.os)
+am_libdw_pic_a_OBJECTS = $(libdw_a_SOURCES:.c=_.os)
 
 libdw_so_LIBS = ../libebl/libebl_pic.a ../backends/libebl_backends_pic.a \
 		../libcpu/libcpu_pic.a libdw_pic.a ../libdwelf/libdwelf_pic.a \
-		../libdwfl/libdwfl_pic.a
+		../libdwfl/libdwfl_pic.a ../libdwfl_stacktrace/libdwfl_stacktrace_pic.a
 libdw_so_DEPS = ../lib/libeu.a ../libelf/libelf.so
 libdw_so_LDLIBS = $(libdw_so_DEPS) -ldl -lz $(argp_LDADD) $(fts_LIBS) $(obstack_LIBS) $(zip_LIBS) -pthread
 libdw.so: $(srcdir)/libdw.map $(libdw_so_LIBS) $(libdw_so_DEPS)
 	$(AM_V_CCLD)$(LINK) $(dso_LDFLAGS) -o $@ \
 		-Wl,--soname,$@.$(VERSION),--enable-new-dtags \
-		-Wl,--version-script,$<,--no-undefined \
+		-Wl,--version-script,$< \
+		$(NO_UNDEFINED) \
 		-Wl,--whole-archive $(libdw_so_LIBS) -Wl,--no-whole-archive \
 		$(libdw_so_LDLIBS)
 	@$(textrel_check)
@@ -132,19 +132,22 @@ uninstall: uninstall-am
 	rm -f $(DESTDIR)$(libdir)/libdw.so
 	rmdir --ignore-fail-on-non-empty $(DESTDIR)$(includedir)/elfutils
 
-libdwfl_objects = $(shell $(AR) t ../libdwfl/libdwfl.a)
+libdwfl_objects = $(shell cat ../libdwfl/libdwfl.manifest)
 libdw_a_LIBADD = $(addprefix ../libdwfl/,$(libdwfl_objects))
 
-libdwelf_objects = $(shell $(AR) t ../libdwelf/libdwelf.a)
+libdwfl_stacktrace_objects = $(shell cat ../libdwfl_stacktrace/libdwfl_stacktrace.manifest)
+libdw_a_LIBADD += $(addprefix ../libdwfl_stacktrace/,$(libdwfl_stacktrace_objects))
+
+libdwelf_objects = $(shell cat ../libdwelf/libdwelf.manifest)
 libdw_a_LIBADD += $(addprefix ../libdwelf/,$(libdwelf_objects))
 
-libebl_objects = $(shell $(AR) t ../libebl/libebl.a)
+libebl_objects = $(shell cat ../libebl/libebl.manifest)
 libdw_a_LIBADD += $(addprefix ../libebl/,$(libebl_objects))
 
-backends_objects = $(shell $(AR) t ../backends/libebl_backends.a)
+backends_objects = $(shell cat ../backends/libebl_backends.manifest)
 libdw_a_LIBADD += $(addprefix ../backends/,$(backends_objects))
 
-libcpu_objects = $(shell $(AR) t ../libcpu/libcpu.a)
+libcpu_objects = $(shell cat ../libcpu/libcpu.manifest)
 libdw_a_LIBADD += $(addprefix ../libcpu/,$(libcpu_objects))
 
 noinst_HEADERS = libdwP.h memory-access.h dwarf_abbrev_hash.h \
@@ -152,4 +155,23 @@ noinst_HEADERS = libdwP.h memory-access.h dwarf_abbrev_hash.h \
 
 EXTRA_DIST = libdw.map
 
-MOSTLYCLEANFILES = $(am_libdw_pic_a_OBJECTS) libdw.so libdw.so.$(VERSION)
+EXTRA_libdw_a_DEPENDENCIES = libdw.manifest
+
+libdw.manifest: $(libdw_a_OBJECTS)
+	$(AM_V_GEN)echo $^ > $@
+
+MOSTLYCLEANFILES = $(am_libdw_a_OBJECTS) $(am_libdw_pic_a_OBJECTS) libdw.so.$(VERSION)
+CLEANFILES = libdw.so $(EXTRA_libdw_a_DEPENDENCIES)
+MAINTAINERCLEANFILES = $(srcdir)/known-dwarf.h
+
+# Internal checks
+check_PROGRAMS = dwarf_srclang_check
+TESTS = $(check_PROGRAMS)
+
+CHECK_DEF_FLAGS = $(DEFS) $(AM_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) \
+       $(DEFAULT_INCLUDES) -Wl,-rpath,../libelf -DMAIN_CHECK=1
+
+.SECONDEXPANSION:
+dwarf_srclang_check$(EXEEXT): $$(filter-out $$(subst _check,,$$@).o,$(libdw_a_OBJECTS)) $$(subst _check,,$$@).c
+	$(AM_V_CC)$(CC) $(CHECK_DEF_FLAGS) -o $@ $^ $(filter-out libdw_pic.a,$(libdw_so_LIBS)) $(libdw_so_LDLIBS)
+nodist_dwarf_srclang_check_SOURCES = dwarf_srclang_check.c

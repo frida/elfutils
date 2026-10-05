@@ -1,3 +1,197 @@
+2023-09-27  Omar Sandoval  <osandov@fb.com>
+
+	* dwarf-getmacros.c (mac): Add DW_MACRO_define_sup,
+	DW_MACRO_define_strx, DW_MACRO_undef_sup, and DW_MACRO_undef_strx
+	cases to opcode switch statement.
+	(getmacros): New function.
+	(main): If second argument is empty, call getmacros on every unit.
+	Otherwise, call getmacros on given unit.
+
+2023-09-27  Omar Sandoval  <osandov@fb.com>
+
+	* run-varlocs.sh: Add entry PC to split units.
+
+2023-04-21  Frank Ch. Eigler <fche@redhat.com>
+
+	* run-debuginfod-IXr.sh: New test.
+	* Makefile.am: Run it, ship it.
+
+2023-02-10  Mark Wielaard  <mark@klomp.org>
+
+	* varlocs.c (print_expr): Handle DW_OP_GNU_uninit.
+
+2023-02-07  Mark Wielaard  <mark@klomp.org>
+
+	* tests/funcretval.c (handle_function): Check for
+	DW_TAG_unspecified_type.
+
+2023-02-03  Mark Wielaard  <mark@klomp.org>
+
+	* run-addr2line-C-test.sh: Check ELFUTILS_DISABLE_DEMANGLE.
+
+2023-01-22  Mark Wielaard  <mark@klomp.org>
+
+	* testfile-inlines-lto.bz2: New testfile.
+	* run-addr2line-i-test.sh: Add new lto inlines test.
+	* Makefile.am (EXTRA_DIST): Add testfile-inlines-lto.bz2.
+
+2023-01-19  Mark Wielaard  <mark@klomp.org>
+
+	* run-addr2line-C-test.sh: New test.
+	* Makefile.am (TESTS): Add run-addr2line-C-test.sh.
+	(EXTRA_DIST): Likewise.
+
+2023-01-19  Mark Wielaard  <mark@klomp.org>
+
+	* run-debuginfod-query-retry.sh: Use libdebuginfod.so.1 instead
+	of /bin/sh as test file.
+
+2022-12-21  Shahab Vahedi  <shahab@synopsys.email>
+
+	* hello_arc_hs4.ko.bz2: New testfile.
+	* run-strip-reloc.sh: Add ARC HS4 test.
+	* Makefile.am (EXTRA_DIST): Add hello_arc_hs4.ko.bz2.
+
+2022-11-01  Aaron Merey  <amerey@redhat.com>
+
+	* run-debuginfod-section.sh (RPM_BUILDID): Use buildid from non-zstd
+	compressed rpm.
+
+2022-10-31  Aaron Merey  <amerey@redhat.com>
+
+	* Makefile.am (TESTS): Add run-debuginfod-section.sh.
+	* run-debuginfod-section.sh: New test.
+
+2022-09-20  Yonggang Luo  <luoyonggang@gmail.com>
+
+	* Makefile.am (EXTRA_DIST): Remove debuginfod-rpms/hello2.spec.
+	Add debuginfod-rpms/hello{2,3}.specfile.
+	* tests/debuginfod-rpms/hello2.spec.: Renamed to...
+	* tests/debuginfod-rpms/hello2.specfile: ...this.
+	* tests/debuginfod-rpms/hello3.spec.: Renamed to...
+	* tests/debuginfod-rpms/hello3.specfile: ...this.
+
+2022-10-28  Arsen Arsenović  <arsen@aarsen.me>
+
+	* run-readelf-s.sh: Add tests for the --syms alias.
+
+2022-10-27  Mark Wielaard  <mark@klomp.org>
+
+	* backtrace-subr.sh: Use grep -E instead of egrep, use grep -F
+	instead of fgrep.
+	* debuginfod-subr.sh: Likewise.
+	* run-debuginfod-archive-rename.sh: Likewise.
+	* run-debuginfod-extraction-passive.sh: Likewise.
+	* run-debuginfod-response-headers.sh: Likewise.
+	* run-debuginfod-webapi-concurrency.sh: Likewise.
+	* run-strip-test.sh: Likewise.
+
+2022-10-16  Mark Wielaard  <mark@klomp.org>
+
+	* dwfl-report-offline-memory.c: Include config.h first.
+
+2022-10-16  Mark Wielaard  <mark@klomp.org>
+
+	* dwfl-report-offline-memory.c (main): Check lseek, read and malloc
+	results with correct types.
+
+2022-09-13  Aleksei Vetrov  <vvvvvv@google.com>
+
+	* Makefile.am (check_PROGRAMS): Add dwfl-report-offline-memory.
+	(TESTS): Add run-dwfl-report-offline-memory.sh.
+	(EXTRA_DIST): Likewise.
+	(dwfl_report_offline_memory_LDADD): New variable.
+	* dwfl-report-offline-memory.c: New file.
+	* run-dwfl-report-offline-memory.sh: Likewise.
+
+2022-09-13  Khem Raj <raj.khem@gmail.com>
+
+	* Makefile.am (*_LDADD): Add libeu if needed for error.
+
+2022-08-26  Mark Wielaard  <mark@klomp.org>
+
+	* run-ar-N.sh: New test.
+	* Makefile.am (TESTS): Add run-ar-N.sh.
+	(EXTRA_DIST): Likewise.
+
+2022-09-02  Frank Ch. Eigler  <fche@redhat.com>
+
+	* run-debuginfod-response-headers.sh: Use case-insensitive
+	header name matches.  Use socat & sleep for greater
+	portability.
+	* run-debuginfod-sizetime.sh: Update for debuginfod-find -v -v.
+
+2022-07-15  Noah Sanci  <nsanci@redhat.com>
+
+	* run-debuginfod-response-headers.sh: Added test
+	to ensure that federated servers pass headers down to
+	queried server.
+
+2022-08-04  Sergei Trofimovich  <slyich@gmail.com>
+
+	* low_high_pc.c (handle_die): Drop redundant 'lx' suffix.
+
+2022-08-01  Mark Wielaard  <mark@klomp.org>
+
+	* run-debuginfod-percent-escape.sh: Add initial scan wait_ready.
+
+2022-04-28  Di Chen  <dichen@redhat.com>
+
+	* run-readelf-Dd.sh: New test.
+	* Makefile.am (TESTS): Add run-readelf-Dd.sh.
+	(EXTRA_DIST): Likewise.
+
+2022-06-01  Mark Wielaard  <mark@klomp.org>
+
+	* testfile-arm-flags.bz2: New test file.
+	* run-readelf-arm-flags.sh: New test.
+	* Makefile.am (TESTS): Add run-readelf-arm-flags.sh.
+	(EXTRA_DIST): Add readelf-arm-flags.sh and testfile-arm-flags.bz2
+
+2022-05-13  Noah Sanci  <nsanci@redhat.com>
+
+	* run-debuginfod-fd-prefetch-caches.sh: Rewritten.
+
+2022-06-02  Mark Wielaard  <mark@klomp.org>
+
+	* Makefile.am (TESTS): Add run-debuginfod-federation-metrics.sh
+	only when OLD_LIBMICROHTTPD conditional is not set.
+
+2022-04-24  Mark Wielaard  <mark@klomp.org>
+
+	* run-debuginfod-webapi-concurrency.sh: Fix PR number in xfail.
+
+2022-04-23  Mark Wielaard  <mark@klomp.org>
+
+	* run-debuginfod-webapi-concurrency.sh: Lower parallel lookups.
+
+2022-03-01  Di Chen <dichen@redhat.com>
+
+	* alldts.c (dtflags): Put DT_NULL last.
+	* run-alldts.sh: NULL comes last.
+	* run-readelf-d.sh: Adjust Dynamic entries, remove DT_NULL
+	padding.
+
+2022-04-14  Mark Wielaard  <mark@klomp.org>
+
+	* run-debuginfod-federation-sqlite.sh: Don't try to corrupt
+	sqlite database.
+
+2022-04-13  Aaron Merey  <amerey@redhat.com>
+
+	* Makefile.am (TESTS): Remove run-debuginfod-000-permission.sh
+	and add run-debuginfod-negative-cache.sh.
+	(EXTRA_DIST): Likewise.
+	* run-debuginfod-federation-link.sh: Update comments about
+	negative-hit file.
+	* run-debuginfod-federation-metrics.sh: Likewise.
+	* run-debuginfod-federation-sqlite.sh: Likewise.
+	* run-debuginfod-tmp-home.sh: Likewise.
+
+2022-03-20  Mark Wielaard  <mark@klomp.org>
+
+	* run-large-elf-file.sh: Check elf class of addsections binary.
+
 2021-12-17  Mark Wielaard  <mark@klomp.org>
 
 	* run-debuginfod-query-retry.sh: Use /bin/sh instead of /bin/ls.

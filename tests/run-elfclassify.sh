@@ -254,6 +254,12 @@ testrun_compare ${abs_top_builddir}/src/elfclassify --unstripped --print $kmod_f
 $(echo $kmod_files | sed -e "s/ /\n/g")
 EOF
 
+echo "kmods are have debug sections"
+testrun ${abs_top_builddir}/src/elfclassify --has-debug-sections $kmod_files
+testrun_compare ${abs_top_builddir}/src/elfclassify --has-debug-sections --print $kmod_files <<EOF
+$(echo $kmod_files | sed -e "s/ /\n/g")
+EOF
+
 echo "kmods are not debug-only"
 testrun ${abs_top_builddir}/src/elfclassify --not-debug-only $kmod_files
 testrun_compare ${abs_top_builddir}/src/elfclassify --not-debug-only --print $kmod_files <<EOF
@@ -299,6 +305,12 @@ testrun_compare ${abs_top_builddir}/src/elfclassify --unstripped --print $debug_
 $(echo $debug_files | sed -e "s/ /\n/g")
 EOF
 
+echo "debug-only files have debug sections"
+testrun ${abs_top_builddir}/src/elfclassify --has-debug-sections $debug_files
+testrun_compare ${abs_top_builddir}/src/elfclassify --has-debug-sections --print $debug_files <<EOF
+$(echo $debug_files | sed -e "s/ /\n/g")
+EOF
+
 echo "debug-only files are not programs"
 testrun ${abs_top_builddir}/src/elfclassify --not-program $debug_files
 testrun_compare ${abs_top_builddir}/src/elfclassify --not-program --print $debug_files <<EOF
@@ -324,4 +336,44 @@ echo "again debug-only"
 testrun ${abs_top_builddir}/src/elfclassify --debug-only $debug_files
 testrun_compare ${abs_top_builddir}/src/elfclassify --debug-only --print $debug_files <<EOF
 $(echo $debug_files | sed -e "s/ /\n/g")
+EOF
+
+testfiles testarchive64.a test-ar-duplicates.a
+
+echo "any-ar-member unstripped"
+# Both archives contain object files with symtabs
+testrun_compare ${abs_top_builddir}/src/elfclassify --any-ar-member --unstripped --print testarchive64.a test-ar-duplicates.a <<EOF
+testarchive64.a
+test-ar-duplicates.a
+EOF
+
+echo "any-ar-member not-unstripped"
+# Empty (opposite of above)
+testrun_compare ${abs_top_builddir}/src/elfclassify --any-ar-member --not-unstripped --print testarchive64.a test-ar-duplicates.a <<EOF
+EOF
+
+echo "any-ar-member executable"
+# Only test-ar-duplicates.a contains executables
+testrun_compare ${abs_top_builddir}/src/elfclassify --any-ar-member --executable --print testarchive64.a test-ar-duplicates.a <<EOF
+test-ar-duplicates.a
+EOF
+
+echo "any-ar-member not-executable"
+# All members in test-ar-duplicates.a are executables
+# So only testarchive64.a has no-executable member(s)
+testrun_compare ${abs_top_builddir}/src/elfclassify --any-ar-member --not-executable --print testarchive64.a test-ar-duplicates.a <<EOF
+testarchive64.a
+EOF
+
+echo "any-ar-member has-debug-sections"
+# Neither has members with actual debug sections.  They both do have
+# members that have symtab so are unstripped (see above).
+testrun_compare ${abs_top_builddir}/src/elfclassify --any-ar-member --has-debug-sections --print testarchive64.a test-ar-duplicates.a <<EOF
+EOF
+
+echo "any-ar-member not-has-debug-sections"
+# Noth match (opposite of above)
+testrun_compare ${abs_top_builddir}/src/elfclassify --any-ar-member --not-has-debug-sections --print testarchive64.a test-ar-duplicates.a <<EOF
+testarchive64.a
+test-ar-duplicates.a
 EOF

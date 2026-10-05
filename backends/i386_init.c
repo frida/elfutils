@@ -1,5 +1,5 @@
 /* Initialization of i386 specific backend library.
-   Copyright (C) 2000-2009, 2013, 2017 Red Hat, Inc.
+   Copyright (C) 2000-2009, 2013, 2017, 2025-2026 Red Hat, Inc.
    This file is part of elfutils.
    Written by Ulrich Drepper <drepper@redhat.com>, 2000.
 
@@ -34,6 +34,7 @@
 #define BACKEND		i386_
 #define RELOC_PREFIX	R_386_
 #include "libebl_CPU.h"
+#include "libebl_PERF_FLAGS.h"
 
 /* This defines the common reloc hooks based on i386_reloc.def.  */
 #include "common-reloc.c"
@@ -55,9 +56,15 @@ i386_init (Elf *elf __attribute__ ((unused)),
   HOOK (eh, auxv_info);
   HOOK (eh, disasm);
   HOOK (eh, abi_cfi);
-  /* gcc/config/ #define DWARF_FRAME_REGISTERS.  For i386 it is 17, why?  */
+  /* gcc/config/ #define DWARF_FRAME_REGISTERS.  For i386 it is 17, why?
+     (Likely an artifact of reusing that header between i386/x86_64.)  */
   eh->frame_nregs = 9;
   HOOK (eh, set_initial_registers_tid);
+  /* set_initial_registers_sample is default ver  */
+  HOOK (eh, sample_sp_pc);
+  HOOK (eh, sample_perf_regs_mapping);
+  eh->perf_frame_regs_mask = PERF_FRAME_REGISTERS_I386;
+  __libebl_init_cached_regs_mapping (eh);
   HOOK (eh, unwind);
 
   return eh;

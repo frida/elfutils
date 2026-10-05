@@ -20,19 +20,21 @@
 # Just some random testfiles, four with, one without build-id,
 # and one without shdrs forcing reading the notes through phdrs.
 # eu-strip --strip-sections -g --output=testfile42_noshdrs testfile42
-# See also run-debugaltlink.sh.
+# See also run-debugaltlink.sh and run-dwelf-dwarf-debug-sup.sh
+# supplementary files don't have build IDs, just a .debug_sup section.
 testfiles testfile42 testfile_multi.dwz testfile-dwzstr.multi \
-    test-offset-loop.alt testfile14 testfile42_noshdrs
+    test-offset-loop.alt testfile14 testfile42_noshdrs testfile-dwarf5.sup
 
 testrun_compare  ${abs_builddir}/buildid testfile42 testfile42_noshdrs \
     testfile_multi.dwz testfile-dwzstr.multi \
-    test-offset-loop.alt testfile14 <<\EOF
+    test-offset-loop.alt testfile14 testfile-dwarf5.sup <<\EOF
 testfile42: build ID: d826d96c4d097bdc5c254b1f7344a907e36b0439
 testfile42_noshdrs: build ID: d826d96c4d097bdc5c254b1f7344a907e36b0439
 testfile_multi.dwz: build ID: a0d6c06e0d912d74033b6fe2808753cae8f6f594
 testfile-dwzstr.multi: build ID: 6da22627dae55c1d62cf9122827c665e240a056b
 test-offset-loop.alt: build ID: 066bbf1a7bc5676f5015ee1966a088f23bdb83ae
 testfile14: <no NT_GNU_BUILD_ID note>
+testfile-dwarf5.sup: <no NT_GNU_BUILD_ID note>
 EOF
 
 exit 0

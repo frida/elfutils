@@ -31,7 +31,7 @@
 #endif
 
 #include "cfi.h"
-#include <search.h>
+#include "eu-search.h"
 #include <stdlib.h>
 
 #include "encoded-value.h"
@@ -104,9 +104,12 @@ intern_fde (Dwarf_CFI *cache, const Dwarf_FDE *entry)
       /* The CIE augmentation says the FDE has a DW_FORM_block
 	 before its actual instruction stream.  */
       Dwarf_Word len;
+      if (fde->instructions >= fde->instructions_end)
+	goto invalid;
       get_uleb128 (len, fde->instructions, fde->instructions_end);
       if ((Dwarf_Word) (fde->instructions_end - fde->instructions) < len)
 	{
+	invalid:
 	  free (fde);
 	  __libdw_seterrno (DWARF_E_INVALID_DWARF);
 	  return NULL;
@@ -119,7 +122,8 @@ intern_fde (Dwarf_CFI *cache, const Dwarf_FDE *entry)
     fde->instructions += cie->fde_augmentation_data_size;
 
   /* Add the new entry to the search tree.  */
-  struct dwarf_fde **tres = tsearch (fde, &cache->fde_tree, &compare_fde);
+  struct dwarf_fde **tres = eu_tsearch_nolock (fde, &cache->fde_tree,
+					       &compare_fde);
   if (tres == NULL)
     {
       free (fde);
@@ -138,8 +142,9 @@ intern_fde (Dwarf_CFI *cache, const Dwarf_FDE *entry)
   return fde;
 }
 
-struct dwarf_fde *
-internal_function
+/* Look for an FDE by its offset in the section.
+   Should be called with cache->lock held.  */
+static struct dwarf_fde *
 __libdw_fde_by_offset (Dwarf_CFI *cache, Dwarf_Off offset)
 {
   Dwarf_CFI_Entry entry;
@@ -249,7 +254,8 @@ __libdw_find_fde (Dwarf_CFI *cache, Dwarf_Addr address)
   /* Look for a cached FDE covering this address.  */
 
   const struct dwarf_fde fde_key = { .start = address, .end = 0 };
-  struct dwarf_fde **found = tfind (&fde_key, &cache->fde_tree, &compare_fde);
+  struct dwarf_fde **found = eu_tfind_nolock (&fde_key, &cache->fde_tree,
+					      &compare_fde);
   if (found != NULL)
     return *found;
 

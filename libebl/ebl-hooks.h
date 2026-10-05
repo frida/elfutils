@@ -1,5 +1,5 @@
 /* Backend hook signatures internal interface for libebl.
-   Copyright (C) 2000-2011, 2013, 2014, 2016, 2017 Red Hat, Inc.
+   Copyright (C) 2000-2011, 2013, 2014, 2016, 2017, 2025 Red Hat, Inc.
    This file is part of elfutils.
 
    This file is free software; you can redistribute it and/or modify
@@ -51,7 +51,7 @@ const char *EBLHOOK(section_type_name) (int, char *, size_t);
 const char *EBLHOOK(section_name) (int, int, char *, size_t);
 
 /* Return next machine flag name.  */
-const char *EBLHOOK(machine_flag_name) (GElf_Word *);
+const char *EBLHOOK(machine_flag_name) (GElf_Word, GElf_Word *);
 
 /* Check whether machine flags are valid.  */
 bool EBLHOOK(machine_flag_check) (GElf_Word);
@@ -157,6 +157,33 @@ int EBLHOOK(abi_cfi) (Ebl *ebl, Dwarf_CIE *abi_info);
 bool EBLHOOK(set_initial_registers_tid) (pid_t tid,
 					 ebl_tid_registers_t *setfunc,
 					 void *arg);
+
+/* Set process data from a register sample and call SETFUNC one or more times.
+   Method should be present only when a 'default' strategy of populating an
+   array of DWARF regs and calling SETFUNC once would be inefficient, e.g.
+   on architectures with sparse/noncontiguous DWARF register files.  */
+bool EBLHOOK(set_initial_registers_sample) (const Dwarf_Word *regs,
+					    uint32_t n_regs,
+					    const int *regs_mapping,
+					    size_t n_regs_mapping,
+					    ebl_tid_registers_t *setfunc,
+					    void *arg);
+
+/* Extract the stack address and instruction pointer from a register sample.  */
+bool EBLHOOK(sample_sp_pc) (const Dwarf_Word *regs, uint32_t n_regs,
+			    const int *regs_mapping,
+			    size_t n_regs_mapping,
+			    Dwarf_Word *sp, Dwarf_Word *pc);
+
+/* Translate from linux perf_events PERF_REGS_MASK and ABI to a generic
+   REGS_MAPPING array for use with ebl_set_initial_registers_sample().
+   Method should be present only when EBL_PERF_FRAME_REGS_MASK > 0,
+   otherwise the backend doesn't support unwinding from perf_events
+   data.  */
+bool EBLHOOK(sample_perf_regs_mapping) (Ebl *ebl,
+					uint64_t perf_regs_mask, uint32_t abi,
+					const int **regs_mapping,
+					size_t *n_regs_mapping);
 
 /* Convert *REGNO as is in DWARF to a lower range suitable for
    Dwarf_Frame->REGS indexing.  */

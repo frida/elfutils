@@ -1,6 +1,7 @@
 ## Common automake fragments for elfutils subdirectory makefiles.
 ##
 ## Copyright (C) 2010, 2014, 2016 Red Hat, Inc.
+## Copyright (C) 2023, 2025, 2026 Mark J. Wielaard <mark@klomp.org>
 ##
 ## This file is part of elfutils.
 ##
@@ -30,7 +31,24 @@
 ##
 
 DEFS = -D_GNU_SOURCE -DHAVE_CONFIG_H -DLOCALEDIR='"${localedir}"'
-AM_CPPFLAGS = -I. -I$(srcdir) -I$(top_srcdir)/lib -I..
+
+# -iquote dirs are just for "header" includes, -I for both <header>
+# and "header" includes. We don't want system <header> includes to
+# search . and srcdir. We do want the headers under lib and the abs
+# top build dir (for config.h).
+#
+# This is mainly to prevent things like #include <stack> to
+# accidentially import the stack binary instead of the standard C++
+# header file (which apparently clang plus libc++ do indirectly).
+# https://bugs.gentoo.org/925241
+# https://sourceware.org/bugzilla/show_bug.cgi?id=33103
+#
+# Note that DEFAULT_INCLUDES might add . and srcdir back.  So
+# DEFAULT_INCLUDES is disabled explicitly in src/Makefile.am (where
+# the stack binary is build). We could also use the nostdinc automake
+# option to completely suppress that, but that needs more auditing of
+# various installed vs not-installed header files.
+AM_CPPFLAGS = -iquote. -iquote$(srcdir) -I$(top_srcdir)/lib -I$(abs_top_builddir)
 
 # Drop the 'u' flag that automake adds by default. It is incompatible
 # with deterministic archives.
@@ -87,10 +105,36 @@ else
 NO_PACKED_NOT_ALIGNED_WARNING=
 endif
 
-AM_CFLAGS = -std=gnu99 -Wall -Wshadow -Wformat=2 \
+if HAVE_USE_AFTER_FREE3_WARNING
+USE_AFTER_FREE3_WARNING=-Wuse-after-free=3
+else
+USE_AFTER_FREE3_WARNING=
+endif
+
+if HAVE_MISSING_PARAMETER_NAME_WARNING
+MISSING_PARAMETER_NAME_WARNING=-Wmissing-parameter-name
+else
+MISSING_PARAMETER_NAME_WARNING=
+endif
+
+if HAVE_DEPRECATED_NON_PROTOTYPE_WARNING
+DEPRECATED_NON_PROTOTYPE_WARNING=-Wdeprecated-non-prototype
+else
+DEPRECATED_NON_PROTOTYPE_WARNING=
+endif
+
+if HAVE_FREE_LABELS_WARNING
+FREE_LABELS_WARNINGS=-Wfree-labels
+else
+FREE_LABELS_WARNING=
+endif
+
+AM_CFLAGS = -Wall -Wshadow -Wformat=2 \
 	    -Wold-style-definition -Wstrict-prototypes $(TRAMPOLINES_WARNING) \
 	    $(LOGICAL_OP_WARNING) $(DUPLICATED_COND_WARNING) \
 	    $(NULL_DEREFERENCE_WARNING) $(IMPLICIT_FALLTHROUGH_WARNING) \
+	    $(USE_AFTER_FREE3_WARNING) $(MISSING_PARAMETER_NAME_WARNING) \
+	    $(DEPRECATED_NON_PROTOTYPE_WARNING) $(FREE_LABELS_WARNING) \
 	    $(if $($(*F)_no_Werror),,-Werror) \
 	    $(if $($(*F)_no_Wunused),,-Wunused -Wextra) \
 	    $(if $($(*F)_no_Wstack_usage),,$(STACK_USAGE_WARNING)) \
@@ -115,7 +159,7 @@ DEFS.os += -DSYMBOL_VERSIONING
 else
 endif
 
-%.os: %.c %.o
+%_.os: %.c %.o
 if AMDEP
 	$(AM_V_CC)if $(COMPILE.os) -c -o $@ $(fpic_CFLAGS) $(DEFS.os) -MT $@ -MD -MP \
 	  -MF "$(DEPDIR)/$*.Tpo" `test -f '$<' || echo '$(srcdir)/'`$<; \
@@ -127,7 +171,15 @@ else
 	$(AM_V_CC)$(COMPILE.os) -c -o $@ $(fpic_CFLAGS) $(DEFS.os) $<
 endif
 
-CLEANFILES = *.gcno *.gcda
+COVERAGE_OUTPUT_DIRECTORY = coverage
+COVERAGE_OUTPUT_FILE = $(PACKAGE_NAME).lcov
+
+.PHONY: clean-coverage coverage
+
+clean-local: clean-coverage
+clean-coverage:
+	-rm -rf $(COVERAGE_OUTPUT_DIRECTORY)
+	-rm -f $(COVERAGE_OUTPUT_FILE) *.gcno *.gcda
 
 textrel_msg = echo "WARNING: TEXTREL found in '$@'"
 if FATAL_TEXTREL
@@ -135,7 +187,7 @@ textrel_found = $(textrel_msg); exit 1
 else
 textrel_found = $(textrel_msg)
 endif
-textrel_check = if $(READELF) -d $@ | fgrep -q TEXTREL; then $(textrel_found); fi
+textrel_check = if $(READELF) -d $@ | grep -F -q TEXTREL; then $(textrel_found); fi
 
 print-%:
 	@echo $*=$($*)

@@ -32,11 +32,11 @@
 
 #include <assert.h>
 #include <dwarf.h>
-#include <search.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include <libdwP.h>
+#include "eu-search.h"
 
 static int
 get_offset_from (Dwarf_Die *die, int name, Dwarf_Word *retp)
@@ -47,7 +47,15 @@ get_offset_from (Dwarf_Die *die, int name, Dwarf_Word *retp)
     return -1;
 
   /* Offset into the corresponding section.  */
-  return INTUSE(dwarf_formudata) (&attr, retp);
+  if (INTUSE(dwarf_formudata) (&attr, retp) != 0)
+    return -1;
+
+  Dwarf_Off offset;
+  if (INTUSE(dwarf_cu_dwp_section_info) (die->cu, DW_SECT_MACRO, &offset, NULL)
+      != 0)
+    return -1;
+  *retp += offset;
+  return 0;
 }
 
 static int
@@ -124,17 +132,32 @@ get_macinfo_table (Dwarf *dbg, Dwarf_Word macoff, Dwarf_Die *cudie)
     = INTUSE(dwarf_attr) (cudie, DW_AT_stmt_list, &attr_mem);
   Dwarf_Off line_offset = (Dwarf_Off) -1;
   if (attr != NULL)
-    if (unlikely (INTUSE(dwarf_formudata) (attr, &line_offset) != 0))
-      return NULL;
+    {
+      if (unlikely (INTUSE(dwarf_formudata) (attr, &line_offset) != 0))
+	return NULL;
+    }
+  else if (cudie->cu->unit_type == DW_UT_split_compile
+	   && dbg->sectiondata[IDX_debug_line] != NULL)
+    line_offset = 0;
+  if (line_offset != (Dwarf_Off) -1)
+    {
+      Dwarf_Off dwp_offset;
+      if (INTUSE(dwarf_cu_dwp_section_info) (cudie->cu, DW_SECT_LINE,
+					     &dwp_offset, NULL) != 0)
+	return NULL;
+      line_offset += dwp_offset;
+    }
 
   Dwarf_Macro_Op_Table *table = libdw_alloc (dbg, Dwarf_Macro_Op_Table,
 					     macinfo_data_size, 1);
   memcpy (table, macinfo_data, macinfo_data_size);
 
+  table->dbg = dbg;
   table->offset = macoff;
   table->sec_index = IDX_debug_macinfo;
   table->line_offset = line_offset;
-  table->is_64bit = cudie->cu->address_size == 8;
+  table->address_size = cudie->cu->address_size;
+  table->offset_size = cudie->cu->offset_size;
   table->comp_dir = __libdw_getcompdir (cudie);
 
   return table;
@@ -148,7 +171,7 @@ get_table_for_offset (Dwarf *dbg, Dwarf_Word macoff,
 {
   const unsigned char *startp = readp;
 
-  /* Request at least 3 bytes for header.  */
+  /* Request at least 3 bytes for header (version 2 bytes, flag 1 byte).  */
   if (readp + 3 > endp)
     {
     invalid_dwarf:
@@ -169,9 +192,10 @@ get_table_for_offset (Dwarf *dbg, Dwarf_Word macoff,
   Dwarf_Off line_offset = (Dwarf_Off) -1;
   if ((flags & 0x2) != 0)
     {
-      line_offset = read_addr_unaligned_inc (is_64bit ? 8 : 4, dbg, readp);
-      if (readp > endp)
+      int offset_bytes = is_64bit ? 8 : 4;
+      if (readp >= endp - offset_bytes)
 	goto invalid_dwarf;
+      line_offset = read_addr_unaligned_inc (offset_bytes, dbg, readp);
     }
   else if (cudie != NULL)
     {
@@ -180,6 +204,23 @@ get_table_for_offset (Dwarf *dbg, Dwarf_Word macoff,
       if (attr != NULL)
 	if (unlikely (INTUSE(dwarf_formudata) (attr, &line_offset) != 0))
 	  return NULL;
+    }
+  if (line_offset != (Dwarf_Off) -1 && cudie != NULL)
+    {
+      Dwarf_Off dwp_offset;
+      if (INTUSE(dwarf_cu_dwp_section_info) (cudie->cu, DW_SECT_LINE,
+					     &dwp_offset, NULL) != 0)
+	return NULL;
+      line_offset += dwp_offset;
+    }
+
+  uint8_t address_size;
+  if (cudie != NULL)
+    address_size = cudie->cu->address_size;
+  else
+    {
+      char *ident = elf_getident (dbg->elf, NULL);
+      address_size = ident[EI_CLASS] == ELFCLASS32 ? 4 : 8;
     }
 
   /* """The macinfo entry types defined in this standard may, but
@@ -215,10 +256,22 @@ get_table_for_offset (Dwarf *dbg, Dwarf_Word macoff,
 
   if ((flags & 0x4) != 0)
     {
+      if (readp >= endp)
+	goto invalid_dwarf;
       unsigned count = *readp++;
       for (unsigned i = 0; i < count; ++i)
 	{
+	  if (readp >= endp)
+	    goto invalid;
 	  unsigned opcode = *readp++;
+
+	  /* Opcode 0 is not allocated (and 0xff means "not stored").
+	     Reject it here: without this check the unsigned expression
+	     opcode - 1 wraps to UINT_MAX for opcode == 0, and the
+	     assignment below would write a Dwarf_Macro_Op_Proto far out
+	     of the bounds of the op_protos[255] stack array.  */
+	  if (opcode == 0)
+	    goto invalid;
 
 	  Dwarf_Macro_Op_Proto e;
 	  if (readp >= endp)
@@ -253,12 +306,14 @@ get_table_for_offset (Dwarf *dbg, Dwarf_Word macoff,
 					     macop_table_size, 1);
 
   *table = (Dwarf_Macro_Op_Table) {
+    .dbg = dbg,
     .offset = macoff,
     .sec_index = IDX_debug_macro,
     .line_offset = line_offset,
     .header_len = readp - startp,
     .version = version,
-    .is_64bit = is_64bit,
+    .address_size = address_size,
+    .offset_size = is_64bit ? 8 : 4,
 
     /* NULL if CUDIE is NULL or DW_AT_comp_dir is absent.  */
     .comp_dir = __libdw_getcompdir (cudie),
@@ -275,20 +330,34 @@ cache_op_table (Dwarf *dbg, int sec_index, Dwarf_Off macoff,
 		Dwarf_Die *cudie)
 {
   Dwarf_Macro_Op_Table fake = { .offset = macoff, .sec_index = sec_index };
-  Dwarf_Macro_Op_Table **found = tfind (&fake, &dbg->macro_ops,
+  Dwarf_Macro_Op_Table **found = eu_tfind (&fake, &dbg->macro_ops_tree,
 					macro_op_compare);
   if (found != NULL)
     return *found;
+
+  mutex_lock (dbg->macro_lock);
+
+  found = eu_tfind_nolock (&fake, &dbg->macro_ops_tree, macro_op_compare);
+  if (found != NULL)
+    {
+      mutex_unlock (dbg->macro_lock);
+      return *found;
+    }
 
   Dwarf_Macro_Op_Table *table = sec_index == IDX_debug_macro
     ? get_table_for_offset (dbg, macoff, startp, endp, cudie)
     : get_macinfo_table (dbg, macoff, cudie);
 
   if (table == NULL)
-    return NULL;
+    {
+      mutex_unlock (dbg->macro_lock);
+      return NULL;
+    }
 
-  Dwarf_Macro_Op_Table **ret = tsearch (table, &dbg->macro_ops,
-					macro_op_compare);
+  Dwarf_Macro_Op_Table **ret = eu_tsearch_nolock (table, &dbg->macro_ops_tree,
+						  macro_op_compare);
+  mutex_unlock (dbg->macro_lock);
+
   if (unlikely (ret == NULL))
     {
       __libdw_seterrno (DWARF_E_NOMEM);
@@ -368,7 +437,7 @@ read_macros (Dwarf *dbg, int sec_index,
 	.dbg = dbg,
 	.sec_idx = sec_index,
 	.version = table->version,
-	.offset_size = table->is_64bit ? 8 : 4,
+	.offset_size = table->offset_size,
 	.str_off_base = str_offsets_base_off (dbg, (cudie != NULL
 						    ? cudie->cu: NULL)),
 	.startp = (void *) startp + offset,

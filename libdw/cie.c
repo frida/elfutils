@@ -33,8 +33,8 @@
 #include "cfi.h"
 #include "encoded-value.h"
 #include <assert.h>
-#include <search.h>
 #include <stdlib.h>
+#include "eu-search.h"
 
 
 static int
@@ -74,21 +74,30 @@ intern_new_cie (Dwarf_CFI *cache, Dwarf_Off offset, const Dwarf_CIE *info)
 
   /* Grok the augmentation string and its data.  */
   const uint8_t *data = info->augmentation_data;
-  for (const char *ap = info->augmentation; *ap != '\0'; ++ap)
+  const uint8_t *const limit = data + info->augmentation_data_size;
+  const char *ap = info->augmentation;
+  /* If present, 'z' must be the first char.  */
+  if (*ap == 'z')
+    {
+      cie->sized_augmentation_data = true;
+      ap++;
+    }
+  for (; *ap != '\0'; ++ap)
     {
       uint8_t encoding;
       switch (*ap)
 	{
-	case 'z':
-	  cie->sized_augmentation_data = true;
-	  continue;
-
 	case 'S':
 	  cie->signal_frame = true;
 	  continue;
 
 	case 'L':		/* LSDA pointer encoding byte.  */
-	  cie->lsda_encoding = *data++;
+	  if (cie->sized_augmentation_data)
+	    {
+	      if (data >= limit)
+		goto invalid;
+	      cie->lsda_encoding = *data++;
+	    }
 	  if (!cie->sized_augmentation_data)
 	    cie->fde_augmentation_data_size
 	      += encoded_value_size (&cache->data->d, cache->e_ident,
@@ -96,13 +105,23 @@ intern_new_cie (Dwarf_CFI *cache, Dwarf_Off offset, const Dwarf_CIE *info)
 	  continue;
 
 	case 'R':		/* FDE address encoding byte.  */
-	  cie->fde_encoding = *data++;
+	  if (cie->sized_augmentation_data)
+	    {
+	      if (data >= limit)
+		goto invalid;
+	      cie->fde_encoding = *data++;
+	    }
 	  continue;
 
 	case 'P':		/* Skip personality routine.  */
-	  encoding = *data++;
-	  data += encoded_value_size (&cache->data->d, cache->e_ident,
-				      encoding, data);
+	  if (cie->sized_augmentation_data)
+	    {
+	      if (data >= limit)
+		goto invalid;
+	      encoding = *data++;
+	      data += encoded_value_size (&cache->data->d, cache->e_ident,
+					  encoding, data);
+	    }
 	  continue;
 
 	default:
@@ -144,7 +163,7 @@ intern_new_cie (Dwarf_CFI *cache, Dwarf_Off offset, const Dwarf_CIE *info)
   cie->initial_state = NULL;
 
   /* Add the new entry to the search tree.  */
-  if (tsearch (cie, &cache->cie_tree, &compare_cie) == NULL)
+  if (eu_tsearch (cie, &cache->cie_tree, &compare_cie) == NULL)
     {
       free (cie);
       __libdw_seterrno (DWARF_E_NOMEM);
@@ -152,6 +171,11 @@ intern_new_cie (Dwarf_CFI *cache, Dwarf_Off offset, const Dwarf_CIE *info)
     }
 
   return cie;
+
+ invalid:
+  free (cie);
+  __libdw_seterrno (DWARF_E_INVALID_DWARF);
+  return NULL;
 }
 
 /* Look up a CIE_pointer for random access.  */
@@ -160,7 +184,8 @@ internal_function
 __libdw_find_cie (Dwarf_CFI *cache, Dwarf_Off offset)
 {
   const struct dwarf_cie cie_key = { .offset = offset };
-  struct dwarf_cie **found = tfind (&cie_key, &cache->cie_tree, &compare_cie);
+  struct dwarf_cie **found = eu_tfind (&cie_key, &cache->cie_tree,
+				       &compare_cie);
   if (found != NULL)
     return *found;
 
@@ -189,7 +214,8 @@ internal_function
 __libdw_intern_cie (Dwarf_CFI *cache, Dwarf_Off offset, const Dwarf_CIE *info)
 {
   const struct dwarf_cie cie_key = { .offset = offset };
-  struct dwarf_cie **found = tfind (&cie_key, &cache->cie_tree, &compare_cie);
+  struct dwarf_cie **found = eu_tfind (&cie_key, &cache->cie_tree,
+				       &compare_cie);
   if (found == NULL)
     /* We have not read this CIE yet.  Enter it.  */
     (void) intern_new_cie (cache, offset, info);

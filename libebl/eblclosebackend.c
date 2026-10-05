@@ -30,7 +30,6 @@
 # include <config.h>
 #endif
 
-#include <dlfcn.h>
 #include <stdlib.h>
 
 #include <libeblP.h>
@@ -43,6 +42,10 @@ ebl_closebackend (Ebl *ebl)
     {
       /* Run the destructor.  */
       ebl->destr (ebl);
+
+      /* Free cached_regs_mapping. */
+      if (ebl->cached_regs_mapping != NULL)
+          free (ebl->cached_regs_mapping);
 
       /* Free the resources.  */
       free (ebl);

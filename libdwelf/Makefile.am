@@ -42,7 +42,8 @@ noinst_HEADERS = libdwelfP.h
 libdwelf_a_SOURCES = dwelf_elf_gnu_debuglink.c dwelf_dwarf_gnu_debugaltlink.c \
 		     dwelf_elf_gnu_build_id.c dwelf_scn_gnu_compressed_size.c \
 		     dwelf_strtab.c dwelf_elf_begin.c \
-		     dwelf_elf_e_machine_string.c
+		     dwelf_elf_e_machine_string.c \
+		     dwelf_dwarf_id_section.c
 
 libdwelf = $(libdw)
 
@@ -52,6 +53,12 @@ libebl = ../libebl/libebl.a
 libeu = ../lib/libeu.a
 
 libdwelf_pic_a_SOURCES =
-am_libdwelf_pic_a_OBJECTS = $(libdwelf_a_SOURCES:.c=.os)
+am_libdwelf_pic_a_OBJECTS = $(libdwelf_a_SOURCES:.c=_.os)
 
-CLEANFILES += $(am_libdwelf_pic_a_OBJECTS)
+EXTRA_libdwelf_a_DEPENDENCIES = libdwelf.manifest
+
+libdwelf.manifest: $(libdwelf_a_OBJECTS)
+	$(AM_V_GEN)echo $^ > $@
+
+MOSTLYCLEANFILES = $(am_libdwelf_a_OBJECTS) $(am_libdwelf_pic_a_OBJECTS)
+CLEANFILES = $(EXTRA_libdwelf_a_DEPENDENCIES)

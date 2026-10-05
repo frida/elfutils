@@ -27,6 +27,13 @@
 #include <unistd.h>
 #include <system.h>
 
+typedef struct hdr_node {
+    Elf *elf;
+    Elf_Arhdr *hdr;
+    struct hdr_node *next;
+} hdr_node;
+
+hdr_node *hdr_list = NULL;
 
 int
 main (int argc, char *argv[])
@@ -80,6 +87,27 @@ main (int argc, char *argv[])
 	  exit (1);
 	}
 
+        /* Keep a list of subelfs and their Elf_Arhdr.  This is used to
+           verifiy that each archive member descriptor stores its own
+           Elf_Ahdr as opposed to the archive descriptor storing one
+           Elf_Ahdr at a time for all archive members.  */
+        hdr_node *node = calloc (1, sizeof (hdr_node));
+        if (node == NULL)
+          {
+            printf ("calloc failed: %s\n", strerror (errno));
+            exit (1);
+          }
+        node->elf = subelf;
+        node->hdr = arhdr;
+
+        if (hdr_list != NULL)
+          {
+	    node->next = hdr_list;
+            hdr_list = node;
+          }
+	else
+          hdr_list = node;
+
       if (strcmp (arhdr->ar_name, argv[2]) == 0)
 	{
 	  int outfd;
@@ -128,8 +156,40 @@ Failed to get base address for the archive element: %s\n",
 	      exit (1);
 	    }
 
-	  /* Close the descriptors.  */
-	  if (elf_end (subelf) != 0 || elf_end (elf) != 0)
+	  /* Verify each subelf descriptor contains a unique copy of its arhdr
+	     and then close each subelf descriptor.  */
+	  hdr_node *cur;
+	  while ((cur = hdr_list) != NULL)
+	    {
+	      /* Verify that arhdr names are unique. */
+	      for (hdr_node *n = cur->next; n != NULL; n = n->next)
+		{
+		  if (strcmp (cur->hdr->ar_name, n->hdr->ar_name) == 0)
+		    {
+		      puts ("Duplicate ar_name");
+		      exit (1);
+		    }
+
+		  if (strcmp (cur->hdr->ar_rawname, n->hdr->ar_rawname) == 0)
+		    {
+		      puts ("Duplicate ar_rawname");
+		      exit (1);
+		    }
+		}
+
+	      if (elf_end (cur->elf) != 0)
+		{
+		  printf ("Error while freeing subELF descriptor: %s\n",
+			  elf_errmsg (-1));
+		  exit (1);
+		}
+
+	      hdr_list = cur->next;
+	      free (cur);
+	    }
+
+	  /* Close the archive descriptor.  */
+	  if (elf_end (elf) != 0)
 	    {
 	      printf ("Freeing ELF descriptors failed: %s", elf_errmsg (-1));
 	      exit (1);
@@ -144,12 +204,6 @@ Failed to get base address for the archive element: %s\n",
 
       /* Get next archive element.  */
       cmd = elf_next (subelf);
-      if (elf_end (subelf) != 0)
-	{
-	  printf ("error while freeing sub-ELF descriptor: %s\n",
-		  elf_errmsg (-1));
-	  exit (1);
-	}
     }
 
   /* When we reach this point we haven't found the given file in the

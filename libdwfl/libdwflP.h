@@ -1,5 +1,5 @@
 /* Internal definitions for libdwfl.
-   Copyright (C) 2005-2015, 2018 Red Hat, Inc.
+   Copyright (C) 2005-2015, 2018, 2024-2025 Red Hat, Inc.
    This file is part of elfutils.
 
    This file is free software; you can redistribute it and/or modify
@@ -38,12 +38,9 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "../libdw/libdwP.h"	/* We need its INTDECLs.  */
-#include "../libdwelf/libdwelfP.h"
-
-#ifdef ENABLE_LIBDEBUGINFOD
-#include "../debuginfod/debuginfod.h"
-#endif
+#include "libdwP.h"	/* We need its INTDECLs.  */
+#include "libdwelfP.h"
+#include "eu-search.h"
 
 typedef struct Dwfl_Process Dwfl_Process;
 
@@ -81,6 +78,7 @@ typedef struct Dwfl_Process Dwfl_Process;
   DWFL_ERROR (LIBEBL_BAD, N_("Internal error due to ebl"))		      \
   DWFL_ERROR (CORE_MISSING, N_("Missing data in core file"))		      \
   DWFL_ERROR (INVALID_REGISTER, N_("Invalid register"))			      \
+  DWFL_ERROR (REGISTER_VAL_UNKNOWN, N_("Unknown register value"))			      \
   DWFL_ERROR (PROCESS_MEMORY_READ, N_("Error reading process memory"))	      \
   DWFL_ERROR (PROCESS_NO_ARCH, N_("Couldn't find architecture of any ELF"))   \
   DWFL_ERROR (PARSE_PROC, N_("Error parsing /proc filesystem"))		      \
@@ -113,9 +111,13 @@ struct Dwfl_User_Core
   int fd;                       /* close if >= 0.  */
 };
 
+/* forward decl from ../libdwfl_stacktrace/ */
+typedef struct Dwflst_Process_Tracker Dwflst_Process_Tracker;
+
 struct Dwfl
 {
   const Dwfl_Callbacks *callbacks;
+  Dwflst_Process_Tracker *tracker;
 #ifdef ENABLE_LIBDEBUGINFOD
   debuginfod_client *debuginfod;
 #endif
@@ -137,6 +139,11 @@ struct Dwfl
   int next_segndx;
 
   struct Dwfl_User_Core *user_core;
+  char *sysroot;		/* sysroot, or NULL to search standard system
+				   paths */
+
+  /* Serialize debuginfod_client usage.  */
+  mutex_define (, debuginfod_lock);
 };
 
 #define OFFLINE_REDZONE		0x10000
@@ -189,7 +196,7 @@ struct Dwfl_Module
   Elf_Data *symxndxdata;	/* Data in the extended section index table. */
   Elf_Data *aux_symxndxdata;	/* Data in the extended auxiliary table. */
 
-  char *elfdir;			/* The dir where we found the main Elf.  */
+  char *elfpath;		/* The path where we found the main Elf.  */
 
   Dwarf *dw;			/* libdw handle for its debugging info.  */
   Dwarf *alt;			/* Dwarf used for dwarf_setalt, or NULL.  */
@@ -202,7 +209,7 @@ struct Dwfl_Module
   /* Known CU's in this module.  */
   struct dwfl_cu *first_cu, **cu;
 
-  void *lazy_cu_root;		/* Table indexed by Dwarf_Off of CU.  */
+  search_tree lazy_cu_tree;	/* Table indexed by Dwarf_Off of CU.  */
 
   struct dwfl_arange *aranges;	/* Mapping of addresses in module to CUs.  */
 
@@ -244,6 +251,12 @@ struct Dwfl_Thread
   /* Bottom (innermost) frame while we're initializing, NULL afterwards.  */
   Dwfl_Frame *unwound;
   void *callbacks_arg;
+
+  /* Data for handling AARCH64 (currently limited to demangling PAC from
+     return addresses). */
+  struct {
+    Dwarf_Addr pauth_insn_mask;
+  } aarch64;
 };
 
 /* See its typedef in libdwfl.h.  */
@@ -266,6 +279,7 @@ struct Dwfl_Frame
        outermost frame.  */
     DWFL_FRAME_STATE_PC_UNDEFINED
   } pc_state;
+  Dwfl_Unwound_Source unwound_source;
   /* Either initialized from appropriate REGS element or on some archs
      initialized separately as the return address has no DWARF register.  */
   Dwarf_Addr pc;
@@ -276,9 +290,11 @@ struct Dwfl_Frame
   Dwarf_Addr regs[];
 };
 
-/* Fetch value from Dwfl_Frame->regs indexed by DWARF REGNO.
-   No error code is set if the function returns FALSE.  */
-bool __libdwfl_frame_reg_get (Dwfl_Frame *state, unsigned regno,
+/* Fetch value from Dwfl_Frame->regs indexed by DWARF REGNO.  The
+   function returns 0 on success, -1 on error (invalid DWARF register
+   number), 1 if the value of the register in the frame is unknown.
+   Even on error, no error code is set.  */
+int __libdwfl_frame_reg_get (Dwfl_Frame *state, unsigned regno,
 			      Dwarf_Addr *val)
   internal_function;
 
@@ -466,6 +482,10 @@ extern void __libdwfl_module_free (Dwfl_Module *mod) internal_function;
 /* Find the main ELF file, update MOD->elferr and/or MOD->main.elf.  */
 extern void __libdwfl_getelf (Dwfl_Module *mod) internal_function;
 
+/* Reset all sh_addr fields to zero for SHF_ALLOC sections if the Elf
+   handle is an ET_REL. Called from libdw_open_elf.  */
+extern void __libdwfl_reset_sh_addr (Elf *elf) internal_function;
+
 /* Process relocations in debugging sections in an ET_REL file.
    FILE must be opened with ELF_C_READ_MMAP_PRIVATE or ELF_C_READ,
    to make it possible to relocate the data in place (or ELF_C_RDWR or
@@ -582,6 +602,15 @@ extern Dwfl_Module *__libdwfl_report_offline (Dwfl *dwfl, const char *name,
 extern void __libdwfl_process_free (Dwfl_Process *process)
   internal_function;
 
+/* Basic implementation of Dwfl_Thread_Callbacks.set_initial_registers.
+   ARG must be a Dwfl_Thread *.  Calls dwfl_thread_state_register_pc
+   if firstreg is -1 (indicating arch PC), dwfl_thread_state_registers
+   otherwise.  */
+extern bool __libdwfl_set_initial_registers_thread (int firstreg,
+						    unsigned nregs,
+						    const Dwarf_Word *regs,
+						    void *arg);
+
 /* Update STATE->unwound for the unwound frame.
    On error STATE->unwound == NULL
    or STATE->unwound->pc_state == DWFL_FRAME_STATE_ERROR;
@@ -626,6 +655,11 @@ extern Dwfl_Error __libdw_image_header (int fd, off_t *start_offset,
    it's no longer used.  Resets *FDP on failure too iff CLOSE_ON_FAIL.  */
 extern Dwfl_Error __libdw_open_file (int *fdp, Elf **elfp,
 				     bool close_on_fail, bool archive_ok)
+  internal_function;
+
+/* Same as __libdw_open_file, but opens Elf handle from memory region.  */
+extern Dwfl_Error __libdw_open_elf_memory (char *data, size_t size, Elf **elfp,
+					   bool archive_ok)
   internal_function;
 
 /* Same as __libdw_open_file, but never closes the given file
@@ -694,10 +728,12 @@ struct r_debug_info
 /* ...
  */
 extern int dwfl_segment_report_module (Dwfl *dwfl, int ndx, const char *name,
+				       const char *executable,
 				       Dwfl_Memory_Callback *memory_callback,
 				       void *memory_callback_arg,
 				       Dwfl_Module_Callback *read_eagerly,
 				       void *read_eagerly_arg,
+				       size_t maxread,
 				       const void *note_file,
 				       size_t note_file_size,
 				       const struct r_debug_info *r_debug_info);
@@ -728,6 +764,7 @@ extern int dwfl_link_map_report (Dwfl *dwfl, const void *auxv, size_t auxv_size,
 
 /* Avoid PLT entries.  */
 INTDECL (dwfl_begin)
+INTDECL (dwfl_end)
 INTDECL (dwfl_errmsg)
 INTDECL (dwfl_errno)
 INTDECL (dwfl_addrmodule)
@@ -756,6 +793,7 @@ INTDECL (dwfl_report_begin_add)
 INTDECL (dwfl_report_module)
 INTDECL (dwfl_report_segment)
 INTDECL (dwfl_report_offline)
+INTDECL (dwfl_report_offline_memory)
 INTDECL (dwfl_report_end)
 INTDECL (dwfl_build_id_find_elf)
 INTDECL (dwfl_build_id_find_debuginfo)
@@ -779,12 +817,16 @@ INTDECL (dwfl_pid)
 INTDECL (dwfl_thread_dwfl)
 INTDECL (dwfl_thread_tid)
 INTDECL (dwfl_frame_thread)
+INTDECL (dwfl_frame_unwound_source)
+INTDECL (dwfl_unwound_source_str)
 INTDECL (dwfl_thread_state_registers)
 INTDECL (dwfl_thread_state_register_pc)
 INTDECL (dwfl_getthread_frames)
 INTDECL (dwfl_getthreads)
 INTDECL (dwfl_thread_getframes)
 INTDECL (dwfl_frame_pc)
+INTDECL (dwfl_frame_reg)
+INTDECL (dwfl_get_debuginfod_client)
 
 /* Leading arguments standard to callbacks passed a Dwfl_Module.  */
 #define MODCB_ARGS(mod)	(mod), &(mod)->userdata, (mod)->name, (mod)->low_addr

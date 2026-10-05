@@ -39,7 +39,11 @@ test_reverse_self ()
 # Only really makes sense for ET_REL files, but try all, just to check
 # it also works if we keep the order for the allocated sections.
 for file in $self_test_files; do
-  test_reverse_self $file
+  if is_obj_bitcode "$file"; then
+    echo "*** skipping bitcode file $file"
+  else
+    test_reverse_self $file
+  fi
 done
 
 exit 0

@@ -39,7 +39,10 @@ dwarf_cfi_addrframe (Dwarf_CFI *cache, Dwarf_Addr address, Dwarf_Frame **frame)
   if (cache == NULL)
     return -1;
 
+  mutex_lock (cache->lock);
   struct dwarf_fde *fde = __libdw_find_fde (cache, address);
+  mutex_unlock (cache->lock);
+
   if (fde == NULL)
     return -1;
 

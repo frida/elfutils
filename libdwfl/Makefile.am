@@ -2,7 +2,7 @@
 ##
 ## Process this file with automake to create Makefile.in
 ##
-## Copyright (C) 2005-2010, 2013 Red Hat, Inc.
+## Copyright (C) 2005-2010, 2013, 2025 Red Hat, Inc.
 ## This file is part of elfutils.
 ##
 ## This file is free software; you can redistribute it and/or modify
@@ -31,7 +31,8 @@
 ##
 include $(top_srcdir)/config/eu.am
 AM_CPPFLAGS += -I$(srcdir) -I$(srcdir)/../libelf -I$(srcdir)/../libebl \
-	   -I$(srcdir)/../libdw -I$(srcdir)/../libdwelf -I$(srcdir)/../debuginfod
+	   -I$(srcdir)/../libdw -I$(srcdir)/../libdwelf -I$(builddir)/../debuginfod \
+	   -I$(srcdir)/../libdwfl_stacktrace
 VERSION = 1
 
 noinst_LIBRARIES = libdwfl.a
@@ -67,10 +68,11 @@ libdwfl_a_SOURCES = dwfl_begin.c dwfl_end.c dwfl_error.c dwfl_version.c \
 		    dwfl_module_return_value_location.c \
 		    dwfl_module_register_names.c \
 		    dwfl_segment_report_module.c \
+		    dwfl_set_sysroot.c \
 		    link_map.c core-file.c open.c image-header.c \
 		    dwfl_frame.c frame_unwind.c dwfl_frame_pc.c \
 		    linux-pid-attach.c linux-core-attach.c dwfl_frame_regs.c \
-		    gzip.c
+		    gzip.c debuginfod-client.c
 
 if BZLIB
 libdwfl_a_SOURCES += bzip2.c
@@ -81,9 +83,6 @@ endif
 if ZSTD
 libdwfl_a_SOURCES += zstd.c
 endif
-if LIBDEBUGINFOD
-libdwfl_a_SOURCES += debuginfod-client.c
-endif
 
 libdwfl = $(libdw)
 libdw = ../libdw/libdw.so
@@ -92,8 +91,14 @@ libebl = ../libebl/libebl.a
 libeu = ../lib/libeu.a
 
 libdwfl_pic_a_SOURCES =
-am_libdwfl_pic_a_OBJECTS = $(libdwfl_a_SOURCES:.c=.os)
+am_libdwfl_pic_a_OBJECTS = $(libdwfl_a_SOURCES:.c=_.os)
 
 noinst_HEADERS = libdwflP.h
 
-CLEANFILES += $(am_libdwfl_pic_a_OBJECTS)
+EXTRA_libdwfl_a_DEPENDENCIES = libdwfl.manifest
+
+libdwfl.manifest: $(libdwfl_a_OBJECTS)
+	$(AM_V_GEN)echo $^ > $@
+
+MOSTLYCLEANFILES = $(am_libdwfl_a_OBJECTS) $(am_libdwfl_pic_a_OBJECTS)
+CLEANFILES = $(EXTRA_libdwfl_a_DEPENDENCIES)

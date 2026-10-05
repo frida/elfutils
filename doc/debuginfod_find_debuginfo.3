@@ -43,13 +43,25 @@ LOOKUP FUNCTIONS
 .BI "                           int " build_id_len ","
 .BI "                           const char *" filename ","
 .BI "                           char ** " path ");"
+.BI "int debuginfod_find_section(debuginfod_client *" client ","
+.BI "                           const unsigned char *" build_id ","
+.BI "                           int " build_id_len ","
+.BI "                           const char * " section ","
+.BI "                           char ** " path ");"
+.BI "int debuginfod_find_metadata(debuginfod_client *" client ","
+.BI "                            const char *" key ","
+.BI "                            const char *" value ","
+.BI "                            char ** " path ");"
+
 
 OPTIONAL FUNCTIONS
 
 .BI "typedef int (*debuginfod_progressfn_t)(debuginfod_client *" client ","
-.BI "                                       long a, long b);"
+.BI "                                       long " a ", long " b ");"
 .BI "void debuginfod_set_progressfn(debuginfod_client *" client ","
 .BI "                               debuginfod_progressfn_t " progressfn ");"
+.BI "int debuginfod_default_progressfn(debuginfod_client *" client ","
+.BI "                                  long " a ", long " b ");"
 .BI "void debuginfod_set_verbose_fd(debuginfod_client *" client ","
 .BI "                               int " fd ");"
 .BI "void debuginfod_set_user_data(debuginfod_client *" client ","
@@ -58,6 +70,7 @@ OPTIONAL FUNCTIONS
 .BI "const char* debuginfod_get_url(debuginfod_client *" client ");"
 .BI "int debuginfod_add_http_header(debuginfod_client *" client ","
 .BI "                               const char* " header ");"
+.BI "const char* debuginfod_get_headers(debuginfod_client *" client ");"
 
 .SH DESCRIPTION
 
@@ -97,6 +110,24 @@ accepts both forms.  Specifically, debuginfod canonicalizes path names
 according to RFC3986 section 5.2.4 (Remove Dot Segments), plus reducing
 any \fB//\fP to \fB/\fP in the path.
 
+.BR debuginfod_find_section ()
+queries the debuginfod server URLs contained in
+.BR $DEBUGINFOD_URLS
+for the binary contents of an ELF/DWARF section contained in a debuginfo
+or executable file with the given \fIbuild_id\fP. \fIsection\fP should
+be the name of the desired ELF/DWARF section.  If a server does not support
+section queries, debuginfod_find_section may query the server for the
+debuginfo and/or executable with \fIbuild_id\fP in order to retrieve
+and extract the section.
+
+.BR debuginfod_find_metadata ()
+queries all debuginfod server URLs contained in
+.BR $DEBUGINFOD_URLS
+for metadata for all matches of a given key/value query against files
+in their indexes.  The resulting file is a JSON document.  See the
+\fIdebuginfod-find(1)\fP man page for examples of the supported types
+of key/value queries and their JSON results.
+
 If \fIpath\fP is not NULL and the query is successful, \fIpath\fP is set
 to the path of the file in the cache. The caller must \fBfree\fP() this value.
 
@@ -116,8 +147,9 @@ use with all other calls.  On error \fBNULL\fP will be returned and
 
 If a find family function is successful, the resulting file is saved
 to the client cache and a file descriptor to that file is returned.
-The caller needs to \fBclose\fP() this descriptor.  Otherwise, a
-negative error code is returned.
+The file descriptor points to the beginning of the file.  The caller
+needs to \fBclose\fP() this descriptor.  Otherwise, a negative error
+code is returned.
 
 .SH "OPTIONAL FUNCTIONS"
 
@@ -146,6 +178,17 @@ modify or trigger signals.)  The progress callback must return 0 to
 continue the work, or any other value to stop work as soon as
 possible.  Consequently, the \fBdebuginfod_find_*\fP() function will
 likely return with an error, but might still succeed.
+
+.BR debuginfod_default_progressfn ()
+is the progress callback function set by the debuginfod client library
+when the
+.B DEBUGINFOD_PROGRESS
+environment variable is set and no progressfn is explicitly set. For more
+information see
+.B DEBUGINFOD_PROGRESS
+below. Custom progress callback functions may call
+.BR debuginfod_default_progressfn ()
+directly to report download status.
 
 .SS "VERBOSE OUTPUT"
 
@@ -187,16 +230,35 @@ indicates success, but out-of-memory conditions may result in
 a non-zero \fI-ENOMEM\fP. If the string is in the wrong form
 \fI-EINVAL\fP will be returned.
 
+\fI$DEBUGINFOD_HEADERS_FILE\fP specifies a file to supply headers to
+outgoing requests. Each non-whitespace line of this file is handled
+as if
+.BR \%debuginfod_add_http_header ()
+were called on the contents.
+
 Note that the current debuginfod-client library implementation uses
 libcurl, but you shouldn't rely on that fact. Don't use this function
 for replacing any standard headers, except for the User-Agent mentioned
-below. The only supported usage of this function is for adding an
-optional header which might or might not be passed through to the
-server for logging purposes only.
+below. You can use this function to add authorization information for
+access control, or to provide optional headers to the server for
+logging purposes.
 
 By default, the library adds a descriptive \fIUser-Agent:\fP
 header to outgoing requests.  If the client application adds
 a header with the same name, this default is suppressed.
+
+During or after a lookup, a client application may call
+.BR \%debuginfod_get_headers ()
+to gather the subset of HTTP response headers received from the
+current or most recent debuginfod server.  Only those headers prefixed
+with
+.BR X-DEBUGINFOD
+(case-insensitive) are kept.  They are returned as a single string,
+with each "header: value" terminated with a \\n (not \\r\\n as in
+HTTP).  It may be NULL.  The resulting string is owned by the library,
+and must not be modified or freed.  The caller should copy the
+returned string if it is needed beyond the release of the client
+object.
 
 .SH "MACROS"
 
@@ -214,16 +276,21 @@ void *debuginfod_so = dlopen(DEBUGINFOD_SONAME, RTLD_LAZY);
 .in
 
 .SH "SECURITY"
-.BR debuginfod_find_debuginfo (),
-.BR debuginfod_find_executable (),
-and
-.BR debuginfod_find_source ()
-\fBdo not\fP include any particular security
-features.  They trust that the binaries returned by the debuginfod(s)
-are accurate.  Therefore, the list of servers should include only
-trustworthy ones.  If accessed across HTTP rather than HTTPS, the
-network should be trustworthy.  Passing user authentication information
-through the internal \fIlibcurl\fP library is not currently enabled, except
+
+If IMA signature(s) are available from the RPMs that contain
+requested files, then
+.BR debuginfod
+will extract those signatures into response headers, and
+.BR debuginfod_find_* ()
+will perform verification upon the files.
+Validation policy is controlled via tags inserted into
+$DEBUGINFOD_URLS.  By default, 
+.BR debuginfod_find_* ()
+acts in ignore mode.
+
+If accessed across HTTP rather than HTTPS, the
+network should be trustworthy.  Authentication information through
+the internal \fIlibcurl\fP library is not currently enabled, except
 for the basic plaintext \%\fIhttp[s]://userid:password@hostname/\fP style.
 (The debuginfod server does not perform authentication, but a front-end
 proxy server could.)
@@ -252,8 +319,8 @@ Unable to resolve remote host.
 .TP
 .BR EINVAL
 One or more arguments are incorrectly formatted. \fIbuild_id\fP may
-be too long (greater than 256 characters), \fIfilename\fP may not
-be an absolute path or a debuginfod URL is malformed.
+be too long (greater than 256 characters), \fIfilename\fP may
+be empty, or a debuginfod URL is malformed.
 
 .TP
 .BR EIO
@@ -290,6 +357,18 @@ Query failed due to timeout. \fB$DEBUGINFOD_TIMEOUT\fP and
 .BR EF2BIG
 Query aborted due to the file requested being too big.  The
 \fB$DEBUGINFOD_MAXSIZE\fP controls this.
+
+.TP
+.BR EBADMSG
+File content failed IMA verification against a known signer certificate.
+
+.TP
+.BR ENOKEY
+File content failed IMA verification due to missing signer certificate.
+
+.TP
+.BR ENODATA
+File content failed IMA verification because of a missing signature.
 
 .nr zZ 1
 .so man7/debuginfod-client-config.7

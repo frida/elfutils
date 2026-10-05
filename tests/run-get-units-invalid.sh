@@ -38,6 +38,11 @@ testfiles testfile-dwarf-4 testfile-dwarf-5
 testrun ${abs_builddir}/get-units-invalid testfile-dwarf-4
 testrun ${abs_builddir}/get-units-invalid testfile-dwarf-5
 
+# see run-dwelf-dwarf-debug-sup.sh
+testfiles testfile-dwarf5-ref-sup testfile-dwarf5.sup
+testrun ${abs_builddir}/get-units-invalid testfile-dwarf5-ref-sup
+testrun ${abs_builddir}/get-units-invalid testfile-dwarf5.sup
+
 # Self test
 testrun_on_self ${abs_builddir}/get-units-invalid
 

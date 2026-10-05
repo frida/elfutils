@@ -29,13 +29,12 @@
 #ifndef _LIBDWP_H
 #define _LIBDWP_H 1
 
-#include <libintl.h>
 #include <stdbool.h>
 #include <pthread.h>
 
-#include <libdw.h>
-#include <dwarf.h>
-#include "atomics.h"
+#include "libdw.h"
+#include "dwarf.h"
+#include "eu-search.h"
 
 
 /* Known location expressions already decoded.  */
@@ -84,10 +83,21 @@ enum
     IDX_debug_macro,
     IDX_debug_ranges,
     IDX_debug_rnglists,
+    IDX_debug_cu_index,
+    IDX_debug_tu_index,
+    IDX_debug_sup,
+    IDX_debug_dwp,
     IDX_gnu_debugaltlink,
     IDX_last
   };
 
+/* Valid indices for the string section's information.  */
+enum string_section_index
+  {
+    STR_SCN_IDX_debug_line_str,
+    STR_SCN_IDX_debug_str,
+    STR_SCN_IDX_last
+  };
 
 /* Error values.  */
 enum
@@ -140,26 +150,22 @@ enum
   DWARF_E_NOT_CUDIE,
   DWARF_E_UNKNOWN_LANGUAGE,
   DWARF_E_NO_DEBUG_ADDR,
+  DWARF_E_UNKNOWN_SECTION,
 };
 
 
 #include "dwarf_sig8_hash.h"
 
-/* The type of Dwarf object, sorted by preference
-   (if there is a higher order type, we pick that one over the others).  */
-enum dwarf_type
-  {
-    TYPE_UNKNOWN = 0,
-    TYPE_GNU_LTO = 16,
-    TYPE_DWO = 32,
-    TYPE_PLAIN = 64,
-  };
 
 /* This is the structure representing the debugging state.  */
 struct Dwarf
 {
   /* The underlying ELF file.  */
   Elf *elf;
+
+  /* The (absolute) path to the ELF file, if known.  To help locating
+     dwp files.  */
+  char *elfpath;
 
   /* The (absolute) path to the ELF dir, if known.  To help locating
      alt and dwo files.  */
@@ -168,8 +174,15 @@ struct Dwarf
   /* dwz alternate DWARF file.  */
   Dwarf *alt_dwarf;
 
+  /* DWARF package file.  */
+  Dwarf *dwp_dwarf;
+
   /* The section data.  */
   Elf_Data *sectiondata[IDX_last];
+
+  /* Size of a prefix of string sections, where any string will be
+     null-terminated. */
+  size_t string_section_size[STR_SCN_IDX_last];
 
   /* True if the file has a byte order different from the host.  */
   bool other_byte_order;
@@ -180,6 +193,9 @@ struct Dwarf
   /* If >= 0, we allocated the alt_dwarf ourselves and must end it and
      close this file descriptor.  */
   int alt_fd;
+
+  /* File descriptor of DWARF package file.  */
+  int dwp_fd;
 
   /* Information for traversing the .debug_pubnames section.  This is
      an array and separately allocated with malloc.  */
@@ -193,28 +209,36 @@ struct Dwarf
   size_t pubnames_nsets;
 
   /* Search tree for the CUs.  */
-  void *cu_tree;
+  search_tree cu_tree;
   Dwarf_Off next_cu_offset;
 
   /* Search tree and sig8 hash table for .debug_types type units.  */
-  void *tu_tree;
+  search_tree tu_tree;
   Dwarf_Off next_tu_offset;
   Dwarf_Sig8_Hash sig8_hash;
 
   /* Search tree for split Dwarf associated with CUs in this debug.  */
-  void *split_tree;
+  search_tree split_tree;
 
   /* Search tree for .debug_macro operator tables.  */
-  void *macro_ops;
+  search_tree macro_ops_tree;
 
   /* Search tree for decoded .debug_line units.  */
-  void *files_lines;
+  search_tree files_lines_tree;
 
-  /* Address ranges.  */
+  /* Address ranges read from .debug_aranges.  */
   Dwarf_Aranges *aranges;
+
+  /* Address ranges inferred from CUs.  */
+  Dwarf_Aranges *dieranges;
 
   /* Cached info from the CFI section.  */
   struct Dwarf_CFI_s *cfi;
+
+  /* DWARF package file CU index section.  */
+  struct Dwarf_Package_Index_s *cu_index;
+  /* DWARF package file TU index section.  */
+  struct Dwarf_Package_Index_s *tu_index;
 
   /* Fake loc CU.  Used when synthesizing attributes for Dwarf_Ops that
      came from a location list entry in dwarf_getlocation_attr.
@@ -226,12 +250,20 @@ struct Dwarf
   /* Similar for addrx/constx, which will come from .debug_addr section.  */
   struct Dwarf_CU *fake_addr_cu;
 
-  enum dwarf_type type;
+  Dwarf_Type type;
 
   /* Supporting lock for internal memory handling.  Ensures threads that have
      an entry in the mem_tails array are not disturbed by new threads doing
      allocations for this Dwarf.  */
   pthread_rwlock_t mem_rwl;
+
+  /* Recursive mutex intended for setting/getting alt_dwarf, next_tu_offset,
+     and next_cu_offset.  Should be held when calling
+     __libdw_intern_next_unit.  */
+  mutex_define(, dwarf_lock);
+
+  /* Synchronize access to dwarf_macro_getsrcfiles and cache_op_table.  */
+  mutex_define(, macro_lock);
 
   /* Internal memory handling.  This is basically a simplified thread-local
      reimplementation of obstacks.  Unfortunately the standard obstack
@@ -328,6 +360,26 @@ struct Dwarf_Aranges_s
   } info[0];
 };
 
+/* DWARF package file unit index.  */
+typedef struct Dwarf_Package_Index_s
+{
+  Dwarf *dbg;
+  uint32_t section_count;
+  uint32_t unit_count;
+  uint32_t slot_count;
+  /* Mapping from DW_SECT_* - 1 to column number in the section tables, or
+     UINT32_MAX if not present.  */
+  uint32_t sections[DW_SECT_RNGLISTS];
+  /* Row number of last unit found in the index.  */
+  uint32_t last_unit_found;
+  const unsigned char *hash_table;
+  const unsigned char *indices;
+  const unsigned char *section_offsets;
+  const unsigned char *section_sizes;
+  /* If DW_SECT_INFO section offsets were truncated to 32 bits, recovered
+     64-bit offsets.  */
+  Dwarf_Off *debug_info_offsets;
+} Dwarf_Package_Index;
 
 /* CU representation.  */
 struct Dwarf_CU
@@ -335,6 +387,8 @@ struct Dwarf_CU
   Dwarf *dbg;
   Dwarf_Off start;
   Dwarf_Off end;
+  /* Row number of this unit in DWARF package file index.  */
+  uint32_t dwp_row;
   uint8_t address_size;
   uint8_t offset_size;
   uint16_t version;
@@ -371,7 +425,7 @@ struct Dwarf_CU
   Dwarf_Files *files;
 
   /* Known location lists.  */
-  void *locs;
+  search_tree locs_tree;
 
   /* Base address for use with ranges and locs.
      Don't access directly, call __libdw_cu_base_address.  */
@@ -394,10 +448,79 @@ struct Dwarf_CU
      Don't access directly, call __libdw_cu_locs_base.  */
   Dwarf_Off locs_base;
 
+  /* Synchronize access to the split member of this Dwarf_CU.
+     Covers __libdw_find_split_unit.  */
+  rwlock_define(, split_lock);
+
+  /* Synchronize access to the last_abbrev_offset member of a Dwarf_Die
+     that refers to this Dwarf_CU.  */
+  mutex_define(, abbrev_lock);
+
+  /* Synchronize access to the lines and files members.
+     Covers dwarf_getsrclines and dwarf_getsrcfiles.  */
+  mutex_define(, src_lock);
+
+  /* Synchronize access to the str_off_base of this Dwarf_CU.
+     Covers __libdw_str_offsets_base_off.  */
+  mutex_define(, str_off_base_lock);
+
+  /* Synchronize access to is_constant_offset.  Should also be held
+     when calling __libdw_intern_expression with Dwarf_CU members.  */
+  mutex_define(, intern_lock);
+
   /* Memory boundaries of this CU.  */
   void *startp;
   void *endp;
 };
+
+/* Aliases to avoid PLTs.  */
+INTDECL (dwarf_aggregate_size)
+INTDECL (dwarf_attr)
+INTDECL (dwarf_attr_integrate)
+INTDECL (dwarf_begin)
+INTDECL (dwarf_begin_elf)
+INTDECL (dwarf_begin_elf_type)
+INTDECL (dwarf_begin_type)
+INTDECL (dwarf_child)
+INTDECL (dwarf_cu_dwp_section_info)
+INTDECL (dwarf_default_lower_bound)
+INTDECL (dwarf_dieoffset)
+INTDECL (dwarf_diename)
+INTDECL (dwarf_end)
+INTDECL (dwarf_entrypc)
+INTDECL (dwarf_errmsg)
+INTDECL (dwarf_formaddr)
+INTDECL (dwarf_formblock)
+INTDECL (dwarf_formref_die)
+INTDECL (dwarf_formsdata)
+INTDECL (dwarf_formstring)
+INTDECL (dwarf_formudata)
+INTDECL (dwarf_getabbrevattr_data)
+INTDECL (dwarf_getalt)
+INTDECL (dwarf_getarange_addr)
+INTDECL (dwarf_getarangeinfo)
+INTDECL (dwarf_getaranges)
+INTDECL (dwarf_getlocation_die)
+INTDECL (dwarf_getsrcfiles)
+INTDECL (dwarf_getsrclines)
+INTDECL (dwarf_get_type)
+INTDECL (dwarf_get_units)
+INTDECL (dwarf_hasattr)
+INTDECL (dwarf_haschildren)
+INTDECL (dwarf_haspc)
+INTDECL (dwarf_highpc)
+INTDECL (dwarf_language)
+INTDECL (dwarf_language_lower_bound)
+INTDECL (dwarf_lowpc)
+INTDECL (dwarf_nextcu)
+INTDECL (dwarf_next_unit)
+INTDECL (dwarf_offdie)
+INTDECL (dwarf_peel_type)
+INTDECL (dwarf_ranges)
+INTDECL (dwarf_setalt)
+INTDECL (dwarf_siblingof)
+INTDECL (dwarf_srclang)
+INTDECL (dwarf_tag)
 
 #define ISV4TU(cu) ((cu)->version == 4 && (cu)->sec_idx == IDX_debug_types)
 
@@ -499,6 +622,8 @@ typedef struct
 /* Prototype table.  */
 typedef struct
 {
+  Dwarf *dbg;
+
   /* Offset of .debug_macro section.  */
   Dwarf_Off offset;
 
@@ -517,7 +642,8 @@ typedef struct
   Dwarf_Half header_len;
 
   uint16_t version;
-  bool is_64bit;
+  uint8_t address_size;
+  uint8_t offset_size;
   uint8_t sec_index;	/* IDX_debug_macro or IDX_debug_macinfo.  */
 
   /* Shows where in TABLE each opcode is defined.  Since opcode 0 is
@@ -666,6 +792,17 @@ extern struct Dwarf *__libdw_find_split_dbg_addr (Dwarf *dbg, void *addr)
 extern struct Dwarf_CU *__libdw_find_split_unit (Dwarf_CU *cu)
      internal_function;
 
+/* Find a unit in a DWARF package file for __libdw_intern_next_unit.  */
+extern int __libdw_dwp_find_unit (Dwarf *dbg, bool debug_types, Dwarf_Off off,
+				  uint16_t version, uint8_t unit_type,
+				  uint64_t unit_id8, uint32_t *unit_rowp,
+				  Dwarf_Off *abbrev_offsetp)
+     __nonnull_attribute__ (1, 7, 8) internal_function;
+
+/* Find the compilation unit in a DWARF package file with the given id.  */
+extern Dwarf_CU *__libdw_dwp_findcu_id (Dwarf *dbg, uint64_t unit_id8)
+     __nonnull_attribute__ (1) internal_function;
+
 /* Get abbreviation with given code.  */
 extern Dwarf_Abbrev *__libdw_findabbrev (struct Dwarf_CU *cu,
 					 unsigned int code)
@@ -673,8 +810,7 @@ extern Dwarf_Abbrev *__libdw_findabbrev (struct Dwarf_CU *cu,
 
 /* Get abbreviation at given offset.  */
 extern Dwarf_Abbrev *__libdw_getabbrev (Dwarf *dbg, struct Dwarf_CU *cu,
-					Dwarf_Off offset, size_t *lengthp,
-					Dwarf_Abbrev *result)
+					Dwarf_Off offset, size_t *lengthp)
      __nonnull_attribute__ (1) internal_function;
 
 /* Get abbreviation of given DIE, and optionally set *READP to the DIE memory
@@ -683,24 +819,49 @@ static inline Dwarf_Abbrev *
 __nonnull_attribute__ (1)
 __libdw_dieabbrev (Dwarf_Die *die, const unsigned char **readp)
 {
-  /* Do we need to get the abbreviation, or need to read after the code?  */
-  if (die->abbrev == NULL || readp != NULL)
+  Dwarf_Abbrev *end_abbrev = DWARF_END_ABBREV;
+  Dwarf_Abbrev *expected = (Dwarf_Abbrev *) NULL;
+
+  if (unlikely (die->cu == NULL))
     {
-      /* Get the abbreviation code.  */
+      /* __atomic_* compiler builtin functions are used instead of <stdatomic.h>
+	 because the builtins can operate on non-_Atomic types.
+	 Dwarf_Die.abbrev cannot be made _Atomic without possibly breaking ABI
+	 compatibility.  */
+      __atomic_compare_exchange_n (&die->abbrev, &expected, end_abbrev, false,
+				   __ATOMIC_RELEASE, __ATOMIC_ACQUIRE);
+      return end_abbrev;
+    }
+
+  Dwarf_Abbrev *abbrev = __atomic_load_n (&die->abbrev, __ATOMIC_ACQUIRE);
+  if (abbrev == NULL || readp != NULL)
+    {
+      /* We need to get the abbreviation or need to read after the code.  */
       unsigned int code;
       const unsigned char *addr = die->addr;
-      if (unlikely (die->cu == NULL
-		    || addr >= (const unsigned char *) die->cu->endp))
-	return die->abbrev = DWARF_END_ABBREV;
+      if (addr >= (const unsigned char *) die->cu->endp)
+	{
+	  __atomic_compare_exchange_n (&die->abbrev, &expected,
+				       end_abbrev, false,
+				       __ATOMIC_RELEASE, __ATOMIC_ACQUIRE);
+	  return end_abbrev;
+	}
+
+      /* Get the abbreviation code.  */
       get_uleb128 (code, addr, die->cu->endp);
       if (readp != NULL)
 	*readp = addr;
 
       /* Find the abbreviation.  */
-      if (die->abbrev == NULL)
-	die->abbrev = __libdw_findabbrev (die->cu, code);
+      if (abbrev == NULL)
+	{
+	  abbrev = __libdw_findabbrev (die->cu, code);
+	  __atomic_compare_exchange_n (&die->abbrev, &expected, abbrev, false,
+				       __ATOMIC_RELEASE, __ATOMIC_ACQUIRE);
+	}
     }
-  return die->abbrev;
+
+  return abbrev;
 }
 
 /* Helper functions for form handling.  */
@@ -796,13 +957,15 @@ extern int __libdw_visit_scopes (unsigned int depth,
 				 void *arg)
   __nonnull_attribute__ (2, 4) internal_function;
 
-/* Parse a DWARF Dwarf_Block into an array of Dwarf_Op's,
-   and cache the result (via tsearch).  */
+/* Parse a DWARF Dwarf_Block into an array of Dwarf_Op's, and cache the
+   result (via tsearch).  The owner of CACHE (typically a Dwarf_CU or
+   Dwarf_CFI_s) must hold a lock when calling this function.  */
 extern int __libdw_intern_expression (Dwarf *dbg,
 				      bool other_byte_order,
 				      unsigned int address_size,
 				      unsigned int ref_size,
-				      void **cache, const Dwarf_Block *block,
+				      search_tree *cache,
+				      const Dwarf_Block *block,
 				      bool cfap, bool valuep,
 				      Dwarf_Op **llbuf, size_t *listlen,
 				      int sec_index)
@@ -998,6 +1161,16 @@ int __libdw_getsrclines (Dwarf *dbg, Dwarf_Off debug_line_offset,
   internal_function
   __nonnull_attribute__ (1);
 
+/* Load .debug_line unit at DEBUG_LINE_OFFSET.  COMP_DIR is a value of
+   DW_AT_comp_dir or NULL if that attribute is not available.  Caches
+   the loaded unit and set *FILESP with loaded information.  Returns 0
+   for success or a negative value for failure.  */
+int __libdw_getsrcfiles (Dwarf *dbg, Dwarf_Off debug_line_offset,
+			 const char *comp_dir, unsigned address_size,
+			 Dwarf_Files **filesp)
+  internal_function
+  __nonnull_attribute__ (1);
+
 /* Load and return value of DW_AT_comp_dir from CUDIE.  */
 const char *__libdw_getcompdir (Dwarf_Die *cudie);
 
@@ -1043,30 +1216,37 @@ str_offsets_base_off (Dwarf *dbg, Dwarf_CU *cu)
   if (cu == NULL && dbg != NULL)
     {
       Dwarf_CU *first_cu;
-      if (dwarf_get_units (dbg, NULL, &first_cu,
-			   NULL, NULL, NULL, NULL) == 0)
+      if (dwarf_get_units (dbg, NULL, &first_cu, NULL, NULL, NULL, NULL) == 0)
 	cu = first_cu;
     }
 
+  Dwarf_Off off = 0;
   if (cu != NULL)
     {
+      mutex_lock (cu->str_off_base_lock);
       if (cu->str_off_base == (Dwarf_Off) -1)
 	{
+	  Dwarf_Off dwp_offset;
+	  if (dwarf_cu_dwp_section_info (cu, DW_SECT_STR_OFFSETS, &dwp_offset,
+					 NULL) == 0)
+	    off = dwp_offset;
 	  Dwarf_Die cu_die = CUDIE(cu);
 	  Dwarf_Attribute attr;
 	  if (dwarf_attr (&cu_die, DW_AT_str_offsets_base, &attr) != NULL)
 	    {
-	      Dwarf_Word off;
-	      if (dwarf_formudata (&attr, &off) == 0)
+	      Dwarf_Word base;
+	      if (dwarf_formudata (&attr, &base) == 0)
 		{
-		  cu->str_off_base = off;
+		  cu->str_off_base = off + base;
+		  mutex_unlock (cu->str_off_base_lock);
 		  return cu->str_off_base;
 		}
 	    }
 	  /* For older DWARF simply assume zero (no header).  */
 	  if (cu->version < 5)
 	    {
-	      cu->str_off_base = 0;
+	      cu->str_off_base = off;
+	      mutex_unlock (cu->str_off_base_lock);
 	      return cu->str_off_base;
 	    }
 
@@ -1074,12 +1254,14 @@ str_offsets_base_off (Dwarf *dbg, Dwarf_CU *cu)
 	    dbg = cu->dbg;
 	}
       else
-	return cu->str_off_base;
+	{
+	  mutex_unlock (cu->str_off_base_lock);
+	  return cu->str_off_base;
+	}
     }
 
   /* No str_offsets_base attribute, we have to assume "zero".
      But there could be a header first.  */
-  Dwarf_Off off = 0;
   if (dbg == NULL)
     goto no_header;
 
@@ -1096,6 +1278,8 @@ str_offsets_base_off (Dwarf *dbg, Dwarf_CU *cu)
   uint64_t unit_length;
   uint16_t version;
 
+  if (unlikely (readendp - readp < 4))
+    goto no_header;
   unit_length = read_4ubyte_unaligned_inc (dbg, readp);
   if (unlikely (unit_length == 0xffffffff))
     {
@@ -1121,11 +1305,14 @@ str_offsets_base_off (Dwarf *dbg, Dwarf_CU *cu)
   /* padding */
   read_2ubyte_unaligned_inc (dbg, readp);
 
-  off = (Dwarf_Off) (readp - start);
+  off += (Dwarf_Off) (readp - start);
 
  no_header:
   if (cu != NULL)
-    cu->str_off_base = off;
+    {
+      cu->str_off_base = off;
+      mutex_unlock (cu->str_off_base_lock);
+    }
 
   return off;
 }
@@ -1159,24 +1346,31 @@ __libdw_cu_ranges_base (Dwarf_CU *cu)
 	}
       else
 	{
+	  Dwarf_Off dwp_offset;
+	  if (dwarf_cu_dwp_section_info (cu, DW_SECT_RNGLISTS, &dwp_offset,
+					 NULL) == 0)
+	    offset = dwp_offset;
+
 	  if (dwarf_attr (&cu_die, DW_AT_rnglists_base, &attr) != NULL)
 	    {
 	      Dwarf_Word off;
 	      if (dwarf_formudata (&attr, &off) == 0)
-		offset = off;
+		offset += off;
 	    }
 
 	  /* There wasn't an rnglists_base, if the Dwarf does have a
 	     .debug_rnglists section, then it might be we need the
 	     base after the first header. */
 	  Elf_Data *data = cu->dbg->sectiondata[IDX_debug_rnglists];
-	  if (offset == 0 && data != NULL)
+	  if (offset == dwp_offset && data != NULL)
 	    {
 	      Dwarf *dbg = cu->dbg;
 	      const unsigned char *readp = data->d_buf;
 	      const unsigned char *const dataend
 		= (unsigned char *) data->d_buf + data->d_size;
 
+	      if (unlikely (readp > dataend - 4))
+		goto no_header;
 	      uint64_t unit_length = read_4ubyte_unaligned_inc (dbg, readp);
 	      unsigned int offset_size = 4;
 	      if (unlikely (unit_length == 0xffffffff))
@@ -1216,8 +1410,8 @@ __libdw_cu_ranges_base (Dwarf_CU *cu)
 	      if (unit_length - 8 < needed)
 		goto no_header;
 
-	      offset = (Dwarf_Off) (offset_array_start
-				    - (unsigned char *) data->d_buf);
+	      offset += (Dwarf_Off) (offset_array_start
+				     - (unsigned char *) data->d_buf);
 	    }
 	}
     no_header:
@@ -1235,26 +1429,33 @@ __libdw_cu_locs_base (Dwarf_CU *cu)
   if (cu->locs_base == (Dwarf_Off) -1)
     {
       Dwarf_Off offset = 0;
+      Dwarf_Off dwp_offset;
+      if (dwarf_cu_dwp_section_info (cu, DW_SECT_LOCLISTS, &dwp_offset, NULL)
+	  == 0)
+	offset = dwp_offset;
+
       Dwarf_Die cu_die = CUDIE(cu);
       Dwarf_Attribute attr;
       if (dwarf_attr (&cu_die, DW_AT_loclists_base, &attr) != NULL)
 	{
 	  Dwarf_Word off;
 	  if (dwarf_formudata (&attr, &off) == 0)
-	    offset = off;
+	    offset += off;
 	}
 
       /* There wasn't an loclists_base, if the Dwarf does have a
 	 .debug_loclists section, then it might be we need the
 	 base after the first header. */
       Elf_Data *data = cu->dbg->sectiondata[IDX_debug_loclists];
-      if (offset == 0 && data != NULL)
+      if (offset == dwp_offset && data != NULL)
 	{
 	  Dwarf *dbg = cu->dbg;
 	  const unsigned char *readp = data->d_buf;
 	  const unsigned char *const dataend
 	    = (unsigned char *) data->d_buf + data->d_size;
 
+	  if (unlikely (readp > dataend - 4))
+	    goto no_header;
 	  uint64_t unit_length = read_4ubyte_unaligned_inc (dbg, readp);
 	  unsigned int offset_size = 4;
 	  if (unlikely (unit_length == 0xffffffff))
@@ -1294,8 +1495,8 @@ __libdw_cu_locs_base (Dwarf_CU *cu)
 	  if (unit_length - 8 < needed)
 	    goto no_header;
 
-	  offset = (Dwarf_Off) (offset_array_start
-				- (unsigned char *) data->d_buf);
+	  offset += (Dwarf_Off) (offset_array_start
+				 - (unsigned char *) data->d_buf);
 	}
 
     no_header:
@@ -1317,12 +1518,19 @@ __libdw_link_skel_split (Dwarf_CU *skel, Dwarf_CU *split)
 
   /* Get .debug_addr and addr_base greedy.
      We also need it for the fake addr cu.
-     There is only one per split debug.  */
+     This needs to be done for each split unit (one per .dwo file, or multiple
+     per .dwp file).  */
   Dwarf *dbg = skel->dbg;
   Dwarf *sdbg = split->dbg;
-  if (sdbg->sectiondata[IDX_debug_addr] == NULL
-      && dbg->sectiondata[IDX_debug_addr] != NULL)
+  if (dbg->sectiondata[IDX_debug_addr] != NULL
+      /* If this split file hasn't been linked yet...  */
+      && (sdbg->sectiondata[IDX_debug_addr] == NULL
+	  /* ... or it was linked to the same skeleton file for another
+	     unit...  */
+	  || (sdbg->sectiondata[IDX_debug_addr]
+	      == dbg->sectiondata[IDX_debug_addr])))
     {
+      /* ... then link the address information for this file and unit.  */
       sdbg->sectiondata[IDX_debug_addr]
 	= dbg->sectiondata[IDX_debug_addr];
       split->addr_base = __libdw_cu_addr_base (skel);
@@ -1336,9 +1544,13 @@ __libdw_link_skel_split (Dwarf_CU *skel, Dwarf_CU *split)
 int __libdw_addrx (Dwarf_CU *cu, Dwarf_Word idx, Dwarf_Addr *addr);
 
 
-/* Helper function to set debugdir field in Dwarf, used from dwarf_begin_elf
+/* Helper function to set elfpath field in Dwarf, used from dwarf_begin_elf
    and libdwfl process_file.  */
-char * __libdw_debugdir (int fd);
+char * __libdw_elfpath (int fd);
+
+/* Helper function to set debugdir field in Dwarf after elfpath field has been
+   set.  */
+void __libdw_set_debugdir (Dwarf *dbg);
 
 
 /* Given the directory of a debug file, an absolute or relative dir
@@ -1358,47 +1570,11 @@ char * __libdw_filepath (const char *debugdir, const char *dir,
 			 const char *file)
   internal_function;
 
+/* Like dwarf_getaranges but aranges are generated from CU address
+   ranges instead of being read from .debug_aranges.
 
-/* Aliases to avoid PLTs.  */
-INTDECL (dwarf_aggregate_size)
-INTDECL (dwarf_attr)
-INTDECL (dwarf_attr_integrate)
-INTDECL (dwarf_begin)
-INTDECL (dwarf_begin_elf)
-INTDECL (dwarf_child)
-INTDECL (dwarf_default_lower_bound)
-INTDECL (dwarf_dieoffset)
-INTDECL (dwarf_diename)
-INTDECL (dwarf_end)
-INTDECL (dwarf_entrypc)
-INTDECL (dwarf_errmsg)
-INTDECL (dwarf_formaddr)
-INTDECL (dwarf_formblock)
-INTDECL (dwarf_formref_die)
-INTDECL (dwarf_formsdata)
-INTDECL (dwarf_formstring)
-INTDECL (dwarf_formudata)
-INTDECL (dwarf_getabbrevattr_data)
-INTDECL (dwarf_getalt)
-INTDECL (dwarf_getarange_addr)
-INTDECL (dwarf_getarangeinfo)
-INTDECL (dwarf_getaranges)
-INTDECL (dwarf_getlocation_die)
-INTDECL (dwarf_getsrcfiles)
-INTDECL (dwarf_getsrclines)
-INTDECL (dwarf_hasattr)
-INTDECL (dwarf_haschildren)
-INTDECL (dwarf_haspc)
-INTDECL (dwarf_highpc)
-INTDECL (dwarf_lowpc)
-INTDECL (dwarf_nextcu)
-INTDECL (dwarf_next_unit)
-INTDECL (dwarf_offdie)
-INTDECL (dwarf_peel_type)
-INTDECL (dwarf_ranges)
-INTDECL (dwarf_setalt)
-INTDECL (dwarf_siblingof)
-INTDECL (dwarf_srclang)
-INTDECL (dwarf_tag)
-
+   Returns 0 if successful and updates ARANGES and NARANGES.  Otherwise
+   returns -1 and sets libdw_errno.
+*/
+int __libdw_getdieranges (Dwarf *dbg, Dwarf_Aranges **aranges, size_t *naranges);
 #endif	/* libdwP.h */

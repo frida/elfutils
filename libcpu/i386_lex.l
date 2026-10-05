@@ -1,3 +1,9 @@
+%top{
+#ifdef HAVE_CONFIG_H
+# include <config.h>
+#endif
+}
+
 %{
 /* Copyright (C) 2004, 2005, 2007, 2008 Red Hat, Inc.
    Written by Ulrich Drepper <drepper@redhat.com>, 2004.
@@ -26,12 +32,7 @@
    the GNU Lesser General Public License along with this program.  If
    not, see <http://www.gnu.org/licenses/>.  */
 
-#ifdef HAVE_CONFIG_H
-# include <config.h>
-#endif
-
 #include <ctype.h>
-#include <libintl.h>
 
 #include <libeu.h>
 #include "system.h"

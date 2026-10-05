@@ -50,6 +50,10 @@ testrun ${abs_top_builddir}/src/elfcmp $merged $remerged
 
 # A random ET_REL file
 input=${abs_top_builddir}/tests/elfstrmerge.o
+if is_obj_bitcode "$input"; then
+  echo "*** skipping bitcode file $self_file"
+  exit 0
+fi
 merged=merged.elf
 stripped=${merged}.stripped
 debugfile=${merged}.debug

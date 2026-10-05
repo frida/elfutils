@@ -90,6 +90,14 @@ callback_verify (pid_t tid, unsigned frameno, Dwarf_Addr pc,
       return;
     }
   Dwfl_Module *mod;
+  /* Skip frames for which there isn't a function name.  */
+  static int nulls_seen = 0;
+  if (symname == NULL)
+    {
+      nulls_seen++;
+      return;
+    }
+  frameno -= nulls_seen;
   /* See case 4. Special case to help out simple frame pointer unwinders. */
   static bool duplicate_sigusr2 = false;
   if (duplicate_sigusr2)
@@ -97,8 +105,8 @@ callback_verify (pid_t tid, unsigned frameno, Dwarf_Addr pc,
   static bool reduce_frameno = false;
   if (reduce_frameno)
     frameno--;
-  static bool pthread_kill_seen = false;
-  if (pthread_kill_seen)
+  static bool raise_impl_seen = false;
+  if (raise_impl_seen)
     frameno--;
   if (! use_raise_jmp_patching && frameno >= 2)
     frameno += 2;
@@ -110,9 +118,10 @@ callback_verify (pid_t tid, unsigned frameno, Dwarf_Addr pc,
 	       && (strcmp (symname, "__kernel_vsyscall") == 0
 		   || strcmp (symname, "__libc_do_syscall") == 0))
 	reduce_frameno = true;
-      else if (! pthread_kill_seen && symname
-	       && strstr (symname, "pthread_kill") != NULL)
-	pthread_kill_seen = true;
+      else if (! raise_impl_seen && symname
+	       && (strstr (symname, "pthread_kill") != NULL
+		   || strcmp (symname, "__raise_direct") == 0))
+	raise_impl_seen = true;
       else
 	{
 	  if (!symname || strcmp (symname, "raise") != 0)

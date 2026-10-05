@@ -57,6 +57,40 @@ extern ssize_t dwelf_dwarf_gnu_debugaltlink (Dwarf *dwarf,
 					     const char **namep,
 					     const void **build_idp);
 
+/* Returns the version, is_supp flag, filepath, and ID from the
+   .debug_sup section if found in the DWARF file.  On success, the
+   version and is_supp flag value, filepath pointer, and ID pointer
+   are written to the output parameters (if not NULL), and the
+   positive (possible zero) length of the ID is returned.  The is_supp
+   flag value is one if the Dwarf object represents a supplementary
+   (alt) file, zero otherwise.  The filepath and ID pointers are valid
+   as long as the Dwarf object is valid.  Returns 0 if the DWARF file
+   lacks a .debug_sup section and sets the filepath and id references
+   to NULL (if given).  Returns -1 in case of malformed data or other
+   errors.  Currently only version 5 is supported.  */
+extern ssize_t dwelf_dwarf_debug_sup (Dwarf *dwarf,
+                                     uint16_t *versionp,
+                                     uint8_t *is_suppp,
+                                     const char **filepathp,
+                                     const uint8_t **idp);
+
+/* Returns the version, is_dwp flag, filepath, and ID from the
+   .debug_dwp section if found in the DWARF file.  On success, the
+   version and is_dwp flag value, filepath pointer, and ID pointer are
+   written to the output parameters (if not NULL), and the positive
+   (possible zero) length of the ID is returned.  The is_dwp flag
+   value is one if the Dwarf object represents a package file, zero
+   otherwise.  The filepath and ID pointers are valid as long as the
+   Dwarf object is valid.  Returns 0 if the DWARF file lacks a
+   .debug_dwp section and sets the filepath and id references to NULL
+   (if given).  Returns -1 in case of malformed data or other errors.
+   Currently only version 6 is supported.  */
+extern ssize_t dwelf_dwarf_debug_dwp (Dwarf *dwarf,
+				      uint16_t *versionp,
+				      uint8_t *is_dwpp,
+				      const char **filepathp,
+				      const uint8_t **idp);
+
 /* Returns the build ID as found in a NT_GNU_BUILD_ID note from either
    a SHT_NOTE section or from a PT_NOTE segment if the ELF file
    doesn't contain any section headers.  On success a pointer to the

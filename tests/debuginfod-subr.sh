@@ -26,6 +26,7 @@ type curl 2>/dev/null || (echo "need curl"; exit 77)
 type rpm2cpio 2>/dev/null || (echo "need rpm2cpio"; exit 77)
 type cpio 2>/dev/null || (echo "need cpio"; exit 77)
 type bzcat 2>/dev/null || (echo "need bzcat"; exit 77)
+type ss 2>/dev/null || (echo "need ss"; exit 77)
 bsdtar --version | grep -q zstd && zstd=true || zstd=false
 echo "zstd=$zstd bsdtar=`bsdtar --version`"
 
@@ -79,12 +80,12 @@ errfiles() {
 # So we gather the LD_LIBRARY_PATH with this cunning trick:
 ldpath=`testrun sh -c 'echo $LD_LIBRARY_PATH'`
 
-wait_ready()
+wait_ready4()
 {
   port=$1;
   what=$2;
   value=$3;
-  timeout=20;
+  timeout=$4;
 
   echo "Wait $timeout seconds on $port for metric $what to change to $value"
   while [ $timeout -gt 0 ]; do
@@ -104,6 +105,16 @@ wait_ready()
     err
   fi
 }
+
+wait_ready()
+{
+  port=$1;
+  what=$2;
+  value=$3;
+  timeout=20;
+  wait_ready4 "$port" "$what" "$value" "$timeout"
+}
+
 
 archive_test() {
     __BUILDID=$1
@@ -141,12 +152,12 @@ archive_test() {
 get_ports() {
   while true; do
     PORT1=`expr '(' $RANDOM % 50 ')' + $base`
-    ss -atn | fgrep ":$PORT1" || break
+    ss -atn | grep -F ":$PORT1" || break
   done
 # Some tests will use two servers, so assign the second var
   while true; do
     PORT2=`expr '(' $RANDOM % 50 ')' + $base + 50`
-    ss -atn | fgrep ":$PORT2" || break
+    ss -atn | grep -F ":$PORT2" || break
   done
 
 }

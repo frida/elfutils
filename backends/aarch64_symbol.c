@@ -134,3 +134,21 @@ aarch64_dynamic_tag_check (int64_t tag)
 	  || tag == DT_AARCH64_PAC_PLT
 	  || tag == DT_AARCH64_VARIANT_PCS);
 }
+
+/* Return symbolic representation of section type.  */
+const char *
+aarch64_section_type_name (int type,
+			   char *buf __attribute__ ((unused)),
+			   size_t len __attribute__ ((unused)))
+{
+  switch (type)
+    {
+#ifndef SHT_AARCH64_ATTRIBUTES
+#define SHT_AARCH64_ATTRIBUTES 0x70000003
+#endif
+    case SHT_AARCH64_ATTRIBUTES:
+      return "AARCH64_ATTRIBUTES";
+    }
+
+  return NULL;
+}

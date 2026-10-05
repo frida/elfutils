@@ -40,12 +40,12 @@ AM_YFLAGS = -p$(<F:parse.y=)
 
 noinst_LIBRARIES = libcpu.a libcpu_pic.a
 
-noinst_HEADERS = i386_dis.h x86_64_dis.h
+noinst_HEADERS = i386_dis.h i386_mne.h x86_64_dis.h
 
 libcpu_a_SOURCES = i386_disasm.c x86_64_disasm.c bpf_disasm.c riscv_disasm.c
 
 libcpu_pic_a_SOURCES =
-am_libcpu_pic_a_OBJECTS = $(libcpu_a_SOURCES:.c=.os)
+am_libcpu_pic_a_OBJECTS = $(libcpu_a_SOURCES:.c=_.os)
 
 i386_gendis_SOURCES = i386_gendis.c i386_lex.l i386_parse.y
 
@@ -91,8 +91,9 @@ libeu = ../lib/libeu.a
 
 i386_lex_CFLAGS = -Wno-unused-label -Wno-unused-function -Wno-sign-compare \
 		  -Wno-implicit-fallthrough
+i386_lex_CFLAGS += $(subst -O3,-Wno-null-dereference,$(findstring -O3,$(CFLAGS)))
+
 i386_parse.o: i386_parse.c i386.mnemonics
-i386_parse_CFLAGS = -DNMNES="`wc -l < i386.mnemonics`"
 i386_lex.o: i386_parse.h
 i386_gendis_LDADD = $(libeu) -lm $(obstack_LIBS)
 
@@ -102,6 +103,11 @@ bpf_disasm_CFLAGS = -Wno-format-nonliteral
 
 EXTRA_DIST = defs/i386
 
-MOSTLYCLEANFILES = $(am_libcpu_pic_a_OBJECTS)
-CLEANFILES += $(foreach P,i386 x86_64,$P_defs $P.mnemonics)
-MAINTAINERCLEANFILES = $(foreach P,i386 x86_64, $P_dis.h)
+EXTRA_libcpu_a_DEPENDENCIES = libcpu.manifest
+
+libcpu.manifest: $(libcpu_a_OBJECTS)
+	$(AM_V_GEN)echo $^ > $@
+
+MOSTLYCLEANFILES = $(am_libcpu_a_OBJECTS) $(am_libcpu_pic_a_OBJECTS) $(i386_gendis_OBJECTS)
+CLEANFILES = $(foreach P,i386 x86_64,$P_defs $P.mnemonics) $(EXTRA_libcpu_a_DEPENDENCIES)
+MAINTAINERCLEANFILES = $(foreach P,i386 x86_64, $P_defs $P_dis.h $P_parse.h)

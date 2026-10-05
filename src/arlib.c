@@ -23,7 +23,6 @@
 #include <assert.h>
 #include <gelf.h>
 #include <inttypes.h>
-#include <libintl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
@@ -65,7 +64,7 @@ arlib_init (void)
                     (arlib_deterministic_output ? 0
                      : (long long int) time (NULL)));
   memcpy (ar_hdr.ar_date, tmpbuf, s);
-  assert ((sizeof (struct ar_hdr)  % sizeof (uint32_t)) == 0);
+  eu_static_assert ((sizeof (struct ar_hdr) % sizeof (uint32_t)) == 0);
 
   /* Note the string for the ar_uid and ar_gid cases is longer than
      necessary.  This does not matter since we copy only as much as
@@ -82,7 +81,7 @@ arlib_init (void)
   /* The first word in the offset table specifies the size.  Create
      such an entry now.  The real value will be filled-in later.  For
      all supported platforms the following is true.  */
-  assert (sizeof (uint32_t) == sizeof (int));
+  eu_static_assert (sizeof (uint32_t) == sizeof (int));
   obstack_int_grow (&symtab.symsoffob, 0);
 
   /* The long name obstack also gets its archive header.  As above,
@@ -195,7 +194,7 @@ void
 arlib_add_symref (const char *symname, off_t symoff)
 {
   /* For all supported platforms the following is true.  */
-  assert (sizeof (uint32_t) == sizeof (int));
+  eu_static_assert (sizeof (uint32_t) == sizeof (int));
   obstack_int_grow (&symtab.symsoffob, (int) le_bswap_32 (symoff));
 
   size_t symname_len = strlen (symname) + 1;
@@ -210,8 +209,8 @@ arlib_add_symbols (Elf *elf, const char *arfname, const char *membername,
 {
   if (sizeof (off) > sizeof (uint32_t) && off > ~((uint32_t) 0))
     /* The archive is too big.  */
-    error (EXIT_FAILURE, 0, _("the archive '%s' is too large"),
-	   arfname);
+    error_exit (0, _("the archive '%s' is too large"),
+		arfname);
 
   /* We only add symbol tables for ELF files.  It makes not much sense
      to add symbols from executables but we do so for compatibility.
@@ -223,8 +222,8 @@ arlib_add_symbols (Elf *elf, const char *arfname, const char *membername,
   GElf_Ehdr ehdr_mem;
   GElf_Ehdr *ehdr = gelf_getehdr (elf, &ehdr_mem);
   if (ehdr == NULL)
-    error (EXIT_FAILURE, 0, _("cannot read ELF header of %s(%s): %s"),
-	   arfname, membername, elf_errmsg (-1));
+    error_exit (0, _("cannot read ELF header of %s(%s): %s"),
+		arfname, membername, elf_errmsg (-1));
 
   GElf_Word symtype;
   if (ehdr->e_type == ET_REL)

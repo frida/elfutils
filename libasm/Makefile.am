@@ -52,7 +52,7 @@ libasm_a_SOURCES = asm_begin.c asm_abort.c asm_end.c asm_error.c \
 		   symbolhash.c
 
 libasm_pic_a_SOURCES =
-am_libasm_pic_a_OBJECTS = $(libasm_a_SOURCES:.c=.os)
+am_libasm_pic_a_OBJECTS = $(libasm_a_SOURCES:.c=_.os)
 
 libasm_so_DEPS = ../lib/libeu.a ../libebl/libebl_pic.a ../libelf/libelf.so ../libdw/libdw.so
 libasm_so_LDLIBS = $(libasm_so_DEPS)
@@ -64,7 +64,8 @@ libasm_so_LIBS = libasm_pic.a
 libasm.so: $(srcdir)/libasm.map $(libasm_so_LIBS) $(libasm_so_DEPS)
 	$(AM_V_CCLD)$(LINK) $(dso_LDFLAGS) -o $@ \
 		-Wl,--soname,$@.$(VERSION) \
-		-Wl,--version-script,$<,--no-undefined \
+		-Wl,--version-script,$< \
+		$(NO_UNDEFINED) \
 		-Wl,--whole-archive $(libasm_so_LIBS) -Wl,--no-whole-archive \
 		$(libasm_so_LDLIBS)
 	@$(textrel_check)
@@ -83,6 +84,13 @@ uninstall: uninstall-am
 	rmdir --ignore-fail-on-non-empty $(DESTDIR)$(includedir)/elfutils
 
 noinst_HEADERS = libasmP.h symbolhash.h
+
 EXTRA_DIST = libasm.map
 
-CLEANFILES += $(am_libasm_pic_a_OBJECTS) libasm.so libasm.so.$(VERSION)
+EXTRA_libasm_a_DEPENDENCIES = libasm.manifest
+
+libasm.manifest: $(libasm_a_OBJECTS)
+	$(AM_V_GEN)echo $^ > $@
+
+MOSTLYCLEANFILES = $(am_libasm_a_OBJECTS) $(am_libasm_pic_a_OBJECTS) libasm.so.$(VERSION)
+CLEANFILES = libasm.so $(EXTRA_libasm_a_DEPENDENCIES)

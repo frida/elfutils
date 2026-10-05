@@ -34,18 +34,19 @@ AM_CPPFLAGS += -I$(srcdir)/../libelf
 noinst_LIBRARIES = libeu.a
 
 libeu_a_SOURCES = xasprintf.c xstrdup.c xstrndup.c xmalloc.c next_prime.c \
-		  crc32.c crc32_file.c \
-		  error.c
-
-if HAVE_ARGP_PARSE
-libeu_a_SOURCES += color.c printversion.c
-endif
+		  crc32.c crc32_file.c eu-search.c \
+		  color.c error.c printversion.c
 
 noinst_HEADERS = fixedsizehash.h libeu.h system.h dynamicsizehash.h list.h \
 		 eu-config.h color.h printversion.h bpf.h \
-		 atomics.h stdatomic-fbsd.h dynamicsizehash_concurrent.h
+		 dynamicsizehash_concurrent.h \
+		 eu-search.h locks.h
+
 EXTRA_DIST = dynamicsizehash.c dynamicsizehash_concurrent.c
 
-if !GPROF
-xmalloc_CFLAGS = -ffunction-sections
-endif
+EXTRA_libeu_a_DEPENDENCIES = libeu.manifest
+
+libeu.manifest: $(libeu_a_OBJECTS)
+	$(AM_V_GEN)echo $^ > $@
+
+CLEANFILES = $(EXTRA_libeu_a_DEPENDENCIES)

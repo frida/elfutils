@@ -46,7 +46,13 @@ setup_alt (Dwarf *main)
   const void *build_id;
   ssize_t ret = dwelf_dwarf_gnu_debugaltlink (main, &alt_name, &build_id);
   if (ret == 0)
-    return NULL;
+    {
+      uint8_t is_sup;
+      ret = dwelf_dwarf_debug_sup (main, NULL, &is_sup, &alt_name,
+				   (const uint8_t **) &build_id);
+      if (ret < 0 || alt_name == NULL || is_sup != 0)
+        return NULL;
+    }
   if (ret == -1)
     errx (1, "dwelf_dwarf_gnu_debugaltlink: %s", dwarf_errmsg (-1));
   int fd = open (alt_name, O_RDONLY);

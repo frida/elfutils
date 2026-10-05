@@ -46,6 +46,11 @@ testrun ${abs_builddir}/dwarf-die-addr-die testfile-world4.dwo
 testrun ${abs_builddir}/dwarf-die-addr-die testfile-hello5.dwo
 testrun ${abs_builddir}/dwarf-die-addr-die testfile-world5.dwo
 
+# See run-dwelf-dwarf-debug-sup.sh
+testfiles testfile-dwarf5-ref-sup testfile-dwarf5.sup
+
+testrun ${abs_builddir}/dwarf-die-addr-die testfile-dwarf5-ref-sup
+
 # Self test
 testrun_on_self ${abs_builddir}/dwarf-die-addr-die
 
